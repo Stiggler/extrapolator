@@ -1,0 +1,12 @@
+# Ignoriere die Datenbankdatei
+data.db
+
+# Ignoriere den virtuellen Environment-Ordner
+myenv/
+
+# Zusätzlich häufig ignorierte Dateien
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
