@@ -30,6 +30,20 @@ def decimal_to_hms(decimal_val):
     seconds = total_seconds % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
+# Umrechnung von h:mm:ss in einen Dezimalwert (Anteil eines Tages)
+def hms_to_decimal(hms_str):
+    try:
+        parts = hms_str.split(':')
+        if len(parts) != 3:
+            return 0.0
+        hours = float(parts[0])
+        minutes = float(parts[1])
+        seconds = float(parts[2])
+        total_seconds = hours * 3600 + minutes * 60 + seconds
+        return total_seconds / 86400
+    except Exception:
+        return 0.0
+
 def parse_contents(contents, filename):
     """
     Dekodiert den Base64-String und liest mit pandas das Excel-Blatt "data" ein.
@@ -242,6 +256,9 @@ app.layout = html.Div([
             html.Button("Prozentwerte", id="calculate-percentages", style={'backgroundColor': 'green', 'color': 'white'}),
             html.Div(id="percentages-status", style={'margin-top': '10px'}),
             html.Br(),
+            html.Button("Extrapolate", id="extrapolate", style={'backgroundColor': 'purple', 'color': 'white'}),
+            html.Div(id="extrapolate-status", style={'margin-top': '10px'}),
+            html.Br(),
             # Der Button "Update Percentages" steht nun vor der Tabelle:
             html.Button("Update Percentages", id="update-percentages", style={'backgroundColor': 'orange', 'color': 'white'}),
             html.Div(id="update-percentages-status", style={'margin-top': '10px'}),
@@ -334,6 +351,7 @@ def create_video_db(n_clicks):
 
 # ---------------- Callback: Prozentwerte berechnen und in Tabelle "percent" speichern ----------------
 
+
 @app.callback(
     [Output("percentages-status", "children"),
      Output("percentages-table", "data"),
@@ -397,13 +415,17 @@ def calculate_percentages(n_clicks, mm_dims, ea_dims):
     df['visibility_share'] = df.apply(lambda row: f"{(row['sum_visibility_raw'] / row['sum_broadcasting_time_raw'] * 100):.2f}%"
                                       if row['sum_broadcasting_time_raw'] and row['sum_broadcasting_time_raw'] != 0 
                                       else "N/A", axis=1)
-    # Berechnung von avg_mention = sum_mentions / count_bid (auf 2 Dezimalstellen)
-    df['avg_mention'] = (df['sum_mentions'] / df['count_bid']).round(2)
-    
+    # Berechnung von avg_mention = sum_visibility_raw / sum_mentions (ohne Rundung)
+    df['avg_mention'] = df.apply(lambda row: row['sum_visibility_raw'] / row['sum_mentions'] 
+                                  if row['sum_mentions'] != 0 else 0, axis=1)
+
+    # Formatierung avg_mention als h:mm:ss (keine Rundung, alle Dezimalstellen beibehalten)
+    df['avg_mention'] = df['avg_mention'].apply(decimal_to_hms)
+
     # Entferne count_bid aus dem finalen Output
     final_cols = group_by_cols + ["sum_mentions", "avg_mention", "sum_visibility", "sum_broadcasting_time", "visibility_share"]
     final_df = df[final_cols]
-    columns = [{"name": col, "id": col, "editable": True if col=="visibility_share" else False} for col in final_df.columns]
+    columns = [{"name": col, "id": col, "editable": True if col in ["visibility_share", "avg_mention"] else False} for col in final_df.columns]
     data = final_df.to_dict("records")
     
     # Schreibe die Tabelle "percent" in die Datenbank:
@@ -430,6 +452,96 @@ def update_percentages_db(n_clicks, table_data):
     df.to_sql("percent", conn, if_exists="replace", index=False)
     conn.close()
     return "Tabelle 'percent' wurde aktualisiert."
+
+# ---------------- Callback: Hochrehnen ----------------
+
+@app.callback(
+    Output("extrapolate-status", "children"),
+    Input("extrapolate", "n_clicks"),
+    State("mm-dimensions", "value")
+)
+def extrapolate_hr(n_clicks, mm_dims):
+    if not n_clicks:
+        return ""
+    if not mm_dims:
+        return "Bitte wählen Sie mindestens eine MM-Dimension für die Hochrechnung aus."
+    
+    db_path = "data.db"
+    conn = sqlite3.connect(db_path)
+    # Lese alle HR-Zeilen aus der Tabelle video (hr_basis = 'HR')
+    df_video = pd.read_sql("SELECT * FROM video WHERE hr_basis = 'HR'", conn)
+    # Lese die Tabelle percent (enthält aggregierte Daten, inkl. visibility_share und avg_mention)
+    df_percent = pd.read_sql("SELECT * FROM percent", conn)
+    conn.close()
+    
+    if df_video.empty:
+        return "Keine HR-Daten in der Tabelle video gefunden."
+    if df_percent.empty:
+        return "Keine Daten in der Tabelle percent gefunden."
+    
+    # Merge beider Tabellen anhand der ausgewählten MM-Dimensionen.
+    # Dabei erhalten die Spalten aus video den Suffix "_video" und aus percent den Suffix "_percent"
+    df_merged = pd.merge(df_video, df_percent, on=mm_dims, suffixes=("_video", "_percent"))
+    
+    # Überschreibe die Spalte visibility_share: Der Wert aus percent soll übernommen werden.
+    df_merged["visibility_share"] = df_merged["visibility_share_percent"]
+    
+    # Hilfsfunktion zur Umrechnung eines Prozent-Strings in einen Faktor
+    def convert_visibility_share(val):
+        try:
+            if isinstance(val, str) and "%" in val:
+                return float(val.strip('%')) / 100.0
+            elif isinstance(val, (int, float)):
+                return float(val)
+            else:
+                return 0.0
+        except Exception:
+            return 0.0
+
+    # Umrechnung: visibility_share als Faktor
+    df_merged["visibility_share_factor"] = df_merged["visibility_share"].apply(convert_visibility_share)
+    
+    # Neue Berechnung: visibility = (visibility_share_factor) * (broadcasting_time aus video)
+    # Hier verwenden wir den Wert aus der Spalte "broadcasting_time" (aus video)
+    if "broadcasting_time" not in df_merged.columns:
+        return "broadcasting_time aus video nicht gefunden."
+    df_merged["visibility"] = df_merged["visibility_share_factor"] * df_merged["broadcasting_time"]
+    
+    # Wichtig: Da avg_mention in der percent-Tabelle als h:mm:ss formatiert vorliegt,
+    # müssen wir diesen String wieder in einen numerischen Wert (Anteil eines Tages) umwandeln.
+    def hms_to_decimal(hms_str):
+        try:
+            parts = hms_str.split(':')
+            if len(parts) != 3:
+                return 0.0
+            hours = float(parts[0])
+            minutes = float(parts[1])
+            seconds = float(parts[2])
+            total_seconds = hours * 3600 + minutes * 60 + seconds
+            return total_seconds / 86400
+        except Exception:
+            return 0.0
+
+    # Konvertiere die avg_mention-Spalte in einen numerischen Wert
+    df_merged["avg_mention_numeric"] = df_merged["avg_mention"].apply(hms_to_decimal)
+    
+    # Berechne neue Mentions: mentions = visibility / avg_mention_numeric
+    df_merged["mentions"] = df_merged["visibility"] / df_merged["avg_mention_numeric"]
+    # Konvertiere in eine Ganzzahl; falls Ergebnis kleiner als 1, setze auf 1
+    df_merged["mentions"] = df_merged["mentions"].apply(lambda x: int(x) if x >= 1 else 1)
+    
+    # Optional: Entferne Hilfsspalten, z. B. visibility_share_factor, avg_mention_numeric und visibility_share_percent
+    df_merged.drop(columns=["visibility_share_factor", "avg_mention_numeric", "visibility_share_percent"], inplace=True)
+    
+    # Schreibe das Ergebnis in die Tabelle "hr_bewegt" in der Datenbank
+    conn = sqlite3.connect(db_path)
+    df_merged.to_sql("hr_bewegt", conn, if_exists="replace", index=False)
+    conn.close()
+    
+    return f"Extrapolation abgeschlossen: {len(df_merged)} Zeilen wurden in 'hr_bewegt' erstellt."
+
+
+
 
 # ---------------- Main ----------------
 
