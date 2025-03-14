@@ -192,6 +192,7 @@ app.layout = html.Div([
                     dcc.Dropdown(
                         id='mm-dimensions',
                         options=[
+                            {'label': 'media', 'value': 'media'},
                             {'label': 'region', 'value': 'region'},
                             {'label': 'country', 'value': 'country'},
                             {'label': 'broadcaster', 'value': 'broadcaster'},
@@ -356,9 +357,12 @@ def calculate_percentages(n_clicks, mm_dims, ea_dims):
         join_condition = " AND ".join([f"v2.{dim} = v.{dim}" for dim in mm_dims])
     else:
         join_condition = "1=1"
+    
+    # Erweiterte Query: Zusätzlich wird COUNT(DISTINCT bid) als count_bid berechnet.
     query = f"""
     SELECT 
          {group_by_clause},
+         COUNT(DISTINCT bid) AS count_bid,
          SUM(mentions) AS sum_mentions,
          SUM(visibility) AS sum_visibility,
          (
@@ -374,13 +378,17 @@ def calculate_percentages(n_clicks, mm_dims, ea_dims):
     if ea_dims:
         having_conditions = " AND ".join([f"({dim} IS NULL OR {dim} = '')" for dim in ea_dims])
         query += f"\nHAVING NOT ({having_conditions})"
+    
     db_path = "data.db"
     conn = sqlite3.connect(db_path)
     df_raw = pd.read_sql(query, conn)
     conn.close()
+    
     if df_raw.empty:
         return "Keine Daten für die Berechnung gefunden.", [], []
+    
     df = df_raw.copy()
+    # Formatierung der Kennzahlen:
     df['sum_mentions'] = df['sum_mentions'].fillna(0).astype(int)
     df['sum_visibility_raw'] = df['sum_visibility']
     df['sum_broadcasting_time_raw'] = df['sum_broadcasting_time']
@@ -389,16 +397,22 @@ def calculate_percentages(n_clicks, mm_dims, ea_dims):
     df['visibility_share'] = df.apply(lambda row: f"{(row['sum_visibility_raw'] / row['sum_broadcasting_time_raw'] * 100):.2f}%"
                                       if row['sum_broadcasting_time_raw'] and row['sum_broadcasting_time_raw'] != 0 
                                       else "N/A", axis=1)
-    final_cols = group_by_cols + ["sum_mentions", "sum_visibility", "sum_broadcasting_time", "visibility_share"]
+    # Berechnung von avg_mention = sum_mentions / count_bid (auf 2 Dezimalstellen)
+    df['avg_mention'] = (df['sum_mentions'] / df['count_bid']).round(2)
+    
+    # Entferne count_bid aus dem finalen Output
+    final_cols = group_by_cols + ["sum_mentions", "avg_mention", "sum_visibility", "sum_broadcasting_time", "visibility_share"]
     final_df = df[final_cols]
-    # Markiere die Spalte "visibility_share" als bearbeitbar:
     columns = [{"name": col, "id": col, "editable": True if col=="visibility_share" else False} for col in final_df.columns]
     data = final_df.to_dict("records")
+    
     # Schreibe die Tabelle "percent" in die Datenbank:
     conn = sqlite3.connect(db_path)
     final_df.to_sql("percent", conn, if_exists="replace", index=False)
     conn.close()
+    
     return "Berechnung erfolgreich.", data, columns
+
 
 # ---------------- Callback: Aktualisierung der bearbeiteten Prozentwerte in der DB ----------------
 
