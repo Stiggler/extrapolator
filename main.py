@@ -583,18 +583,18 @@ def extrapolate_hr(n_clicks, mm_dims):
     Output("results-status", "children"),
     Input("calculate-results", "n_clicks")
 )
-def create_video_final(n_clicks):
+def process_video_final(n_clicks):
     if not n_clicks:
         return ""
     db_path = "data.db"
+    
+    # 1. Lade die Tabellen video und hr_bewegt und vereinige sie (Union-All)
     conn = sqlite3.connect(db_path)
-    # Lade die gesamte Tabelle video
     df_video = pd.read_sql("SELECT * FROM video", conn)
-    # Lade die gesamte Tabelle hr_bewegt
     df_hr = pd.read_sql("SELECT * FROM hr_bewegt", conn)
     conn.close()
     
-    # Für die Tabelle hr_bewegt sollen die Felder sponsor_percent und tool_percent als sponsor bzw. tool verwendet werden.
+    # In der hr_bewegt-Tabelle sollen die Felder sponsor_percent und tool_percent als sponsor bzw. tool verwendet werden.
     if "sponsor_percent" in df_hr.columns:
         df_hr["sponsor"] = df_hr["sponsor_percent"]
         df_hr.drop(columns=["sponsor_percent"], inplace=True)
@@ -602,15 +602,29 @@ def create_video_final(n_clicks):
         df_hr["tool"] = df_hr["tool_percent"]
         df_hr.drop(columns=["tool_percent"], inplace=True)
     
-    # Jetzt vereinigen wir beide DataFrames (Union-All, also vertikal aneinanderhängen)
+    # Vereine beide DataFrames (vertikal, also Union-All)
     df_final = pd.concat([df_video, df_hr], ignore_index=True)
     
-    # Schreibe den konsolidierten DataFrame in die neue Tabelle "video_final"
+    # 2. Berechne sponsoring_value_cpt:
+    # Formel: ((visibility * reach * 86400)/1000 * 10 * 1000000)/30
+    try:
+        df_final["sponsoring_value_cpt"] = (df_final["visibility"] * df_final["reach"] * 86400 / 1000 * 10 * 1000000) / 30
+        # Keine Rundung im Sinne eines fixen Formats, sondern Ausgabe aller Dezimalstellen als Zahl
+        # Alternativ, falls du wirklich keine Rundung möchtest, einfach:
+        # df_final["sponsoring_value_cpt"] = df_final["sponsoring_value_cpt"]
+        # Hier aber runden wir auf drei Nachkommastellen, damit es übersichtlicher ist:
+        #df_final["sponsoring_value_cpt"] = df_final["sponsoring_value_cpt"].apply(lambda x: "" if pd.isna(x) else int(x))
+        
+    except Exception as e:
+        return f"Fehler bei der Berechnung von sponsoring_value_cpt: {e}"
+    
+    # 3. Schreibe den konsolidierten DataFrame in die neue Tabelle "video_final"
     conn = sqlite3.connect(db_path)
     df_final.to_sql("video_final", conn, if_exists="replace", index=False)
     conn.close()
     
-    return f"Neue Tabelle 'video_final' erstellt: {len(df_final)} Zeilen."
+    return f"Neue Tabelle 'video_final' erstellt: {len(df_final)} Zeilen, Sponsoring_Value_CPT aktualisiert."
+
 
 # ---------------- Excel export video  ----------------
 
@@ -639,17 +653,21 @@ def export_to_excel(n_clicks):
         for i, col in enumerate(df.columns):
             col_letter = get_column_letter(i+1)
             # Für "reach": Zahl mit 2 Dezimalstellen
-            if col.lower() == "reach":
+            if col.lower() == ["reach", "ratings_14+", "tv_ratings_14+"]:
                 for cell in worksheet[col_letter][1:]:  # Überspringe den Header
                     cell.number_format = '0.00'
             # Für "broadcasting_time", "visibility" und "apt": Format h:mm:ss
-            elif col.lower() in ["broadcasting_time", "visibility", "apt"]:
+            elif col.lower() in ["broadcasting_time", "visibility", "apt", "start_time_program", "end_time_program", "start_time_item"]:
                 for cell in worksheet[col_letter][1:]:
                     cell.number_format = 'h:mm:ss'
+             # Für sponsoring_value_cpt und pr_value: Zahl mit Tausendertrennzeichen (Punkt als Trenner) ohne Dezimalstellen
+            elif col.lower() in ["sponsoring_value_cpt", "pr_value", "advertising_price_TV", "advertising_price_OTT", "ave_100", "ave_weighted"]:
+                for cell in worksheet[col_letter][1:]:
+                    cell.number_format = '#,##0'
         # writer.save() ist hier nicht zwingend nötig, da der Kontextmanager das Speichern übernimmt.
     output.seek(0)
     # Sende die Bytes als Download zurück
-    return dcc.send_bytes(output.getvalue(), "video_final.xlsx")
+    return dcc.send_bytes(output.getvalue(), "report_video.xlsx")
 
 
 
