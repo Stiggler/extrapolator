@@ -2,6 +2,7 @@ import base64
 import io
 import sqlite3
 import pandas as pd
+import dash
 from dash import Dash, dcc, html, dash_table, Input, Output, State
 import math
 from io import BytesIO
@@ -161,7 +162,7 @@ def get_aggregated_data_opposite():
 
 app.layout = html.Div([
     dcc.Tabs([
-        dcc.Tab(label="Import", children=[
+        dcc.Tab(label="Import", selected_style={'backgroundColor': '#da8d00', 'color': 'white'}, children=[
             html.H1("Excel Daten Import Tool"),
             html.Div([
                 html.Label("Import-Modus:"),
@@ -171,10 +172,10 @@ app.layout = html.Div([
                         {"label": "Append", "value": "append"},
                         {"label": "Replace", "value": "replace"}
                     ],
-                    value="append",
+                    value="replace",
                     labelStyle={'display': 'inline-block', 'margin-right': '10px'}
                 )
-            ], style={'margin-bottom': '20px'}),
+            ], style={'margin-bottom': '10px'}),
             dcc.Upload(
                 id="upload-data",
                 children=html.Div([
@@ -191,6 +192,8 @@ app.layout = html.Div([
                     'borderStyle': 'dashed',
                     'borderRadius': '5px',
                     'textAlign': 'center',
+                    'color': 'white',
+                    'background': '#73b8e6',
                     'margin-bottom': '20px'
                 }
             ),
@@ -219,104 +222,187 @@ app.layout = html.Div([
                 ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top'})
             ])
         ]),
-        dcc.Tab(label="Bewegtbild", children=[
-            dcc.Tabs([
-                dcc.Tab(label="Hochrechnung", children=[
-                    html.H1("Bewegtbild – Hochrechnung"),
-                    html.Button("DB erstellen", id="create-db-video", style={'backgroundColor': 'blue', 'color': 'white'}),
-                    html.Div(id="create-db-status", style={'margin-top': '10px'}),
-                    html.Br(),
-                    html.Div([
-                        html.Div([
-                            html.H3("MM-Dimensionen"),
-                            dcc.Dropdown(
-                                id='mm-dimensions',
-                                options=[
-                                    {'label': 'media', 'value': 'media'},
-                                    {'label': 'region', 'value': 'region'},
-                                    {'label': 'country', 'value': 'country'},
-                                    {'label': 'broadcaster', 'value': 'broadcaster'},
-                                    {'label': 'channel', 'value': 'channel'},
-                                    {'label': 'genre', 'value': 'genre'},
-                                    {'label': 'sports', 'value': 'sports'},
-                                    {'label': 'competition', 'value': 'competition'},
-                                    {'label': 'season', 'value': 'season'},
-                                    {'label': 'event', 'value': 'event'},
-                                    {'label': 'venue', 'value': 'venue'},
-                                    {'label': 'event_country', 'value': 'event_country'},
-                                    {'label': 'post_type', 'value': 'post_type'},
-                                    {'label': 'owned_channel', 'value': 'owned_channel'},
-                                    {'label': 'discipline', 'value': 'discipline'},
-                                    {'label': 'j1', 'value': 'j1'},
-                                    {'label': 'j2', 'value': 'j2'},
-                                    {'label': 'j3', 'value': 'j3'},
-                                    {'label': 'j4', 'value': 'j4'},
-                                    {'label': 'j5', 'value': 'j5'},
-                                    {'label': 'hr1', 'value': 'hr1'},
-                                    {'label': 'hr2', 'value': 'hr2'},
-                                    {'label': 'hr3', 'value': 'hr3'},
-                                    {'label': 'hr4', 'value': 'hr4'},
-                                    {'label': 'hr5', 'value': 'hr5'}
-                                ],
-                                multi=True,
-                                placeholder="Wählen Sie MM-Dimensionen..."
+        dcc.Tab(label="Bewegtbild", selected_style={'backgroundColor': '#da8d00', 'color': 'white'}, children=[
+            dcc.Tabs(
+                id="bewegtbild-subtabs",
+                value="hochrechnung",  # Standardmäßig aktiver Untertab
+                children=[
+                    dcc.Tab(
+                        label="Hochrechnung",
+                        value="hochrechnung",
+                        selected_style={'backgroundColor': '#73b8e6', 'color': 'white'},
+                        children=[
+                            html.H1("Bewegtbild – Hochrechnung"),
+                            html.Button("DB erstellen", id="create-db-video", style={'backgroundColor': 'blue', 'color': 'white'}),
+                            html.Div(id="create-db-status", style={'margin-top': '10px'}),
+                            html.Br(),
+                            html.Div([
+                                html.Div([
+                                    html.H3("MM-Dimensionen"),
+                                    dcc.Dropdown(
+                                        id='mm-dimensions',
+                                        options=[
+                                            {'label': 'media', 'value': 'media'},
+                                            {'label': 'region', 'value': 'region'},
+                                            {'label': 'country', 'value': 'country'},
+                                            {'label': 'broadcaster', 'value': 'broadcaster'},
+                                            {'label': 'channel', 'value': 'channel'},
+                                            {'label': 'genre', 'value': 'genre'},
+                                            {'label': 'sports', 'value': 'sports'},
+                                            {'label': 'competition', 'value': 'competition'},
+                                            {'label': 'season', 'value': 'season'},
+                                            {'label': 'event', 'value': 'event'},
+                                            {'label': 'venue', 'value': 'venue'},
+                                            {'label': 'event_country', 'value': 'event_country'},
+                                            {'label': 'post_type', 'value': 'post_type'},
+                                            {'label': 'owned_channel', 'value': 'owned_channel'},
+                                            {'label': 'discipline', 'value': 'discipline'},
+                                            {'label': 'j1', 'value': 'j1'},
+                                            {'label': 'j2', 'value': 'j2'},
+                                            {'label': 'j3', 'value': 'j3'},
+                                            {'label': 'j4', 'value': 'j4'},
+                                            {'label': 'j5', 'value': 'j5'},
+                                            {'label': 'hr1', 'value': 'hr1'},
+                                            {'label': 'hr2', 'value': 'hr2'},
+                                            {'label': 'hr3', 'value': 'hr3'},
+                                            {'label': 'hr4', 'value': 'hr4'},
+                                            {'label': 'hr5', 'value': 'hr5'}
+                                        ],
+                                        multi=True,
+                                        placeholder="Wählen Sie MM-Dimensionen..."
+                                    )
+                                ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top', 'padding-right': '2%'}),
+                                html.Div([
+                                    html.H3("EA-Dimensionen"),
+                                    dcc.Dropdown(
+                                        id='ea-dimensions',
+                                        options=[
+                                            {'label': 'company', 'value': 'company'},
+                                            {'label': 'sponsor', 'value': 'sponsor'},
+                                            {'label': 'tool', 'value': 'tool'},
+                                            {'label': 'personal_sponsorship', 'value': 'personal_sponsorship'},
+                                            {'label': 'tool_location', 'value': 'tool_location'}
+                                        ],
+                                        multi=True,
+                                        placeholder="Wählen Sie EA-Dimensionen..."
+                                    )
+                                ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top'})
+                            ]),
+                            html.Br(),
+                            html.Button("Prozentwerte", id="calculate-percentages", style={'backgroundColor': 'green', 'color': 'white'}),
+                            html.Div(id="percentages-status", style={'margin-top': '10px'}),
+                            html.Br(),
+                            html.Button("Extrapolate", id="extrapolate", style={'backgroundColor': 'purple', 'color': 'white'}),
+                            html.Div(id="extrapolate-status", style={'margin-top': '10px'}),
+                            html.Br(),
+                            html.Button("Update Percentages", id="update-percentages", style={'backgroundColor': 'orange', 'color': 'white'}),
+                            html.Div(id="update-percentages-status", style={'margin-top': '10px'}),
+                            html.Br(),
+                            dash_table.DataTable(
+                                id="percentages-table",
+                                columns=[],  # Dynamisch gesetzt
+                                data=[],     # Dynamisch gesetzt
+                                editable=True,
+                                filter_action="native",
+                                sort_action="native",
+                                sort_mode="multi",
+                                style_table={'overflowX': 'auto'},
+                                style_cell={'textAlign': 'left'}
                             )
-                        ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top', 'padding-right': '2%'}),
-                        html.Div([
-                            html.H3("EA-Dimensionen"),
-                            dcc.Dropdown(
-                                id='ea-dimensions',
-                                options=[
-                                    {'label': 'company', 'value': 'company'},
-                                    {'label': 'sponsor', 'value': 'sponsor'},
-                                    {'label': 'tool', 'value': 'tool'},
-                                    {'label': 'personal_sponsorship', 'value': 'personal_sponsorship'},
-                                    {'label': 'tool_location', 'value': 'tool_location'}
-                                ],
-                                multi=True,
-                                placeholder="Wählen Sie EA-Dimensionen..."
+                        ]
+                    ),
+                    dcc.Tab(label="Ergebnisse",
+                            selected_style={'backgroundColor': '#73b8e6', 'color': 'white'},
+                            children=[
+                        html.H1("Bewegtbild – Ergebnisse"),
+                        html.Button("Berechne Ergebnisse", id="calculate-results", style={'backgroundColor': 'darkblue', 'color': 'white'}),
+                        html.Button("Tabelle", id="calculate-results2", style={'backgroundColor': 'darkblue', 'color': 'white'}),
+                        html.Button("Export", id="export-button", style={'backgroundColor': 'darkgreen', 'color': 'white', 'margin-left': '10px'}),
+                        html.Div(id="results-status", style={'margin-top': '10px'}),
+                        dcc.Download(id="download"),
+                        dash_table.DataTable(
+                            id="results-table",
+                            columns=[],  # Wird dynamisch gesetzt
+                            data=[],     # Wird dynamisch gesetzt
+                            editable=False,
+                            filter_action="native",
+                            sort_action="native",
+                            sort_mode="multi",
+                            style_table={'overflowX': 'auto'},
+                            style_cell={'textAlign': 'left'}
+                        ),
+                        html.Div("Platzhalter – hier folgen später Charts und weitere Visualisierungen.")
+                    ])
+,
+                    dcc.Tab(
+                        label="Basecheck",
+                        value="basecheck",
+                        selected_style={'backgroundColor': '#73b8e6', 'color': 'white'},
+                        children=[
+                            html.H1("Bewegtbild – Basecheck"),
+                            html.Div([
+                                html.H3("MM-Dimensionen (Basecheck)"),
+                                dcc.Dropdown(
+                                    id='mm-dimensions-basecheck',
+                                    options=[
+                                        {'label': 'media', 'value': 'media'},
+                                        {'label': 'region', 'value': 'region'},
+                                        {'label': 'country', 'value': 'country'},
+                                        {'label': 'broadcaster', 'value': 'broadcaster'},
+                                        {'label': 'channel', 'value': 'channel'},
+                                        {'label': 'genre', 'value': 'genre'},
+                                        {'label': 'sports', 'value': 'sports'},
+                                        {'label': 'competition', 'value': 'competition'},
+                                        {'label': 'season', 'value': 'season'},
+                                        {'label': 'event', 'value': 'event'},
+                                        {'label': 'venue', 'value': 'venue'},
+                                        {'label': 'event_country', 'value': 'event_country'},
+                                        {'label': 'post_type', 'value': 'post_type'},
+                                        {'label': 'owned_channel', 'value': 'owned_channel'},
+                                        {'label': 'discipline', 'value': 'discipline'},
+                                        {'label': 'j1', 'value': 'j1'},
+                                        {'label': 'j2', 'value': 'j2'},
+                                        {'label': 'j3', 'value': 'j3'},
+                                        {'label': 'j4', 'value': 'j4'},
+                                        {'label': 'j5', 'value': 'j5'},
+                                        {'label': 'hr1', 'value': 'hr1'},
+                                        {'label': 'hr2', 'value': 'hr2'},
+                                        {'label': 'hr3', 'value': 'hr3'},
+                                        {'label': 'hr4', 'value': 'hr4'},
+                                        {'label': 'hr5', 'value': 'hr5'}
+                                    ],
+                                    multi=True,
+                                    placeholder="Wählen Sie MM-Dimensionen..."
+                                )
+                            ]),
+                            html.Br(),
+                            html.Button("Berechne Basecheck", id="calculate-basecheck", style={'backgroundColor': 'darkorange', 'color': 'white'}),
+                            html.Div(id="basecheck-status", style={'margin-top': '10px'}),
+                            html.Br(),
+                            dash_table.DataTable(
+                                id="basecheck-table",
+                                columns=[],  # wird dynamisch gesetzt
+                                data=[],     # wird dynamisch gesetzt
+                                editable=False,
+                                filter_action="native",
+                                sort_action="native",
+                                sort_mode="multi",
+                                style_table={'overflowX': 'auto'},
+                                style_cell={'textAlign': 'left'}
                             )
-                        ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top'})
-                    ]),
-                    html.Br(),
-                    html.Button("Prozentwerte", id="calculate-percentages", style={'backgroundColor': 'green', 'color': 'white'}),
-                    html.Div(id="percentages-status", style={'margin-top': '10px'}),
-                    html.Br(),
-                    html.Button("Extrapolate", id="extrapolate", style={'backgroundColor': 'purple', 'color': 'white'}),
-                    html.Div(id="extrapolate-status", style={'margin-top': '10px'}),
-                    html.Br(),
-                    html.Button("Update Percentages", id="update-percentages", style={'backgroundColor': 'orange', 'color': 'white'}),
-                    html.Div(id="update-percentages-status", style={'margin-top': '10px'}),
-                    html.Br(),
-                    dash_table.DataTable(
-                        id="percentages-table",
-                        columns=[],  # Diese werden dynamisch gesetzt
-                        data=[],     # Diese werden dynamisch gesetzt
-                        editable=True,
-                        filter_action="native",
-                        sort_action="native",
-                        sort_mode="multi",
-                        style_table={'overflowX': 'auto'},
-                        style_cell={'textAlign': 'left'}
+                        ]
                     )
-                ]),
-                # Im Layout (z. B. im Tab "Ergebnisse") ergänzen:
-                dcc.Tab(label="Ergebnisse", children=[
-                    html.H1("Bewegtbild – Ergebnisse"),
-                    html.Button("Berechne Ergebnisse", id="calculate-results", style={'backgroundColor': 'darkblue', 'color': 'white'}),
-                    html.Button("Export", id="export-button", style={'backgroundColor': 'darkgreen', 'color': 'white', 'margin-left': '10px'}),
-                    html.Div(id="results-status", style={'margin-top': '10px'}),
-                    dcc.Download(id="download"),
-                    html.Div("Platzhalter – hier folgen später Charts und weitere Visualisierungen.")
+
+                ]
+            )
+        ])
+        ,
+                dcc.Tab(label="Nicht-Bewegtbild", selected_style={'backgroundColor': '#da8d00', 'color': 'white'}, children=[
+                    html.H1("Nicht-Bewegtbild"),
+                    html.Div("Platzhalter – hier folgt in Kürze die Implementierung.")
                 ])
             ])
-        ]),
-        dcc.Tab(label="Nicht-Bewegtbild", children=[
-            html.H1("Nicht-Bewegtbild"),
-            html.Div("Platzhalter – hier folgt in Kürze die Implementierung.")
         ])
-    ])
-])
 
 # ---------------- Callback: Datenimport und Aggregation ----------------
 
@@ -580,54 +666,133 @@ def extrapolate_hr(n_clicks, mm_dims):
 
 
 @app.callback(
-    Output("results-status", "children"),
-    Input("calculate-results", "n_clicks")
+    [Output("results-status", "children"),
+     Output("results-table", "data"),
+     Output("results-table", "columns")],
+    [Input("calculate-results", "n_clicks"),
+     Input("calculate-results2", "n_clicks")],
+    [State("mm-dimensions", "value"),
+     State("ea-dimensions", "value")]
 )
-def process_video_final(n_clicks):
-    if not n_clicks:
-        return ""
+def combined_results(n_clicks1, n_clicks2, mm_dims, ea_dims):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return "", [], []
+    
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
     db_path = "data.db"
     
-    # 1. Lade die Tabellen video und hr_bewegt und vereinige sie (Union-All)
-    conn = sqlite3.connect(db_path)
-    df_video = pd.read_sql("SELECT * FROM video", conn)
-    df_hr = pd.read_sql("SELECT * FROM hr_bewegt", conn)
-    conn.close()
-    
-    # In der hr_bewegt-Tabelle sollen die Felder sponsor_percent und tool_percent als sponsor bzw. tool verwendet werden.
-    if "sponsor_percent" in df_hr.columns:
-        df_hr["sponsor"] = df_hr["sponsor_percent"]
-        df_hr.drop(columns=["sponsor_percent"], inplace=True)
-    if "tool_percent" in df_hr.columns:
-        df_hr["tool"] = df_hr["tool_percent"]
-        df_hr.drop(columns=["tool_percent"], inplace=True)
-    
-    # Vereine beide DataFrames (vertikal, also Union-All)
-    df_final = pd.concat([df_video, df_hr], ignore_index=True)
-    
-    # 2. Berechne sponsoring_value_cpt:
-    # Formel: ((visibility * reach * 86400)/1000 * 10 * 1000000)/30
-    try:
-        df_final["sponsoring_value_cpt"] = (df_final["visibility"] * df_final["reach"] * 86400 / 1000 * 10 * 1000000) / 30
-        # Keine Rundung im Sinne eines fixen Formats, sondern Ausgabe aller Dezimalstellen als Zahl
-        # Alternativ, falls du wirklich keine Rundung möchtest, einfach:
-        # df_final["sponsoring_value_cpt"] = df_final["sponsoring_value_cpt"]
-        # Hier aber runden wir auf drei Nachkommastellen, damit es übersichtlicher ist:
-        #df_final["sponsoring_value_cpt"] = df_final["sponsoring_value_cpt"].apply(lambda x: "" if pd.isna(x) else int(x))
+    if triggered_id == "calculate-results":
+        # Logik zum Erstellen der Tabelle "video_final" (Union von video und hr_bewegt)
+        conn = sqlite3.connect(db_path)
+        df_video = pd.read_sql("SELECT * FROM video_final", conn)
+        df_hr = pd.read_sql("SELECT * FROM hr_bewegt", conn)
+        conn.close()
         
-    except Exception as e:
-        return f"Fehler bei der Berechnung von sponsoring_value_cpt: {e}"
+        # In hr_bewegt sollen sponsor_percent und tool_percent als sponsor bzw. tool übernommen werden.
+        if "sponsor_percent" in df_hr.columns:
+            df_hr["sponsor"] = df_hr["sponsor_percent"]
+            df_hr.drop(columns=["sponsor_percent"], inplace=True)
+        if "tool_percent" in df_hr.columns:
+            df_hr["tool"] = df_hr["tool_percent"]
+            df_hr.drop(columns=["tool_percent"], inplace=True)
+        
+        # Vereine beide DataFrames (Union-All)
+        df_final = pd.concat([df_video, df_hr], ignore_index=True)
+        
+        # Berechne sponsoring_value_cpt:
+        # Formel: ((visibility * reach * 86400)/1000 * 10 * 1000000)/30
+        try:
+            df_final["sponsoring_value_cpt"] = (df_final["visibility"] * df_final["reach"] * 86400 / 1000 * 10 * 1000000) / 30
+            df_final["sponsorship_contacts"] = (df_final["visibility"] * df_final["reach"] * 86400 / 30) 
+            df_final["ave_100"] = (df_final["visibility"]* 86400) * (df_final["advertising_price_TV"] / 30)
+            # Umwandlung in Integer (falls NaN, setze 0)
+            df_final["sponsoring_value_cpt"] = df_final["sponsoring_value_cpt"].fillna(0).apply(lambda x: int(x))
+            df_final["ave_100"] = df_final["ave_100"].fillna(0).apply(lambda x: int(x))
+        except Exception as e:
+            return f"Fehler bei der Berechnung von sponsoring_value_cpt: {e}", [], []
+        
+        # Schreibe den konsolidierten DataFrame in die Tabelle "video_final"
+        conn = sqlite3.connect(db_path)
+        df_final.to_sql("video_final", conn, if_exists="replace", index=False)
+        conn.close()
+        
+        return f"Neue Tabelle 'video_final' erstellt: {len(df_final)} Zeilen, Sponsoring_Value_CPT aktualisiert.", [], []
     
-    # 3. Schreibe den konsolidierten DataFrame in die neue Tabelle "video_final"
-    conn = sqlite3.connect(db_path)
-    df_final.to_sql("video_final", conn, if_exists="replace", index=False)
-    conn.close()
-    
-    return f"Neue Tabelle 'video_final' erstellt: {len(df_final)} Zeilen, Sponsoring_Value_CPT aktualisiert."
+    elif triggered_id == "calculate-results2":
+        # Erstelle die Gruppierung: Nutze alle in mm- und ea-Dimensionen ausgewählten Felder
+        group_by_cols = []
+        if mm_dims:
+            group_by_cols.extend(mm_dims)
+        if ea_dims:
+            group_by_cols.extend(ea_dims)
+        if not group_by_cols:
+            return "Bitte wählen Sie mindestens eine Dimension aus.", [], []
+        
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql("SELECT * FROM video_final", conn)
+        conn.close()
+        
+        if df.empty:
+            return "Die Tabelle video_final ist leer.", [], []
+        
+        # Filtere nur Zeilen mit hr_basis "Basis" oder "HR"
+        df = df[df['hr_basis'].isin(['Basis', 'HR'])]
+        
+        # Gruppierung für visibility: Berechne die Summe der visibility pro Gruppe und hr_basis
+        grouped_vis = df.groupby(group_by_cols + ['hr_basis'], as_index=False)['visibility'].sum()
+        pivot_vis = grouped_vis.pivot_table(index=group_by_cols, 
+                                            columns='hr_basis', 
+                                            values='visibility', 
+                                            fill_value=0).reset_index()
+        pivot_vis.rename(columns={'Basis': 'sum_visibility_basis', 'HR': 'sum_visibility_hr'}, inplace=True)
+        
+        # Gruppierung für die zusätzlichen Kennzahlen: 
+        # - bid_count: Anzahl eindeutiger bid 
+        # - sum_ave_100: Summe der Spalte ave_100
+        grouped_extra = df.groupby(group_by_cols + ['hr_basis'], as_index=False).agg({
+            'bid': pd.Series.nunique,
+            'ave_100': 'sum'
+        })
+        # Pivotiere bid_count
+        pivot_bid = grouped_extra.pivot_table(index=group_by_cols, 
+                                            columns='hr_basis', 
+                                            values='bid', 
+                                            fill_value=0).reset_index()
+        pivot_bid.rename(columns={'Basis': 'bid_count_basis', 'HR': 'bid_count_hr'}, inplace=True)
+        # Pivotiere sum_ave_100
+        pivot_ave = grouped_extra.pivot_table(index=group_by_cols, 
+                                            columns='hr_basis', 
+                                            values='ave_100', 
+                                            fill_value=0).reset_index()
+        pivot_ave.rename(columns={'Basis': 'sum_ave_100_basis', 'HR': 'sum_ave_100_hr'}, inplace=True)
+
+        # Merge der Ergebnisse:
+        final_df = pivot_vis.merge(pivot_bid, on=group_by_cols, how='outer') \
+                            .merge(pivot_ave, on=group_by_cols, how='outer')
+
+        final_df["sum_visibility_basis"] = final_df["sum_visibility_basis"].apply(decimal_to_hms)
+        final_df["sum_visibility_hr"] = final_df["sum_visibility_hr"].apply(decimal_to_hms)
+
+        # Formatierung: Umwandlung in Ganzzahlen mit Tausendertrennzeichen
+        final_df["bid_count_basis"] = final_df["bid_count_basis"].apply(lambda x: format(int(x), ",d"))
+        final_df["bid_count_hr"] = final_df["bid_count_hr"].apply(lambda x: format(int(x), ",d"))
+        final_df["sum_ave_100_basis"] = final_df["sum_ave_100_basis"].apply(lambda x: format(int(x), ",d"))
+        final_df["sum_ave_100_hr"] = final_df["sum_ave_100_hr"].apply(lambda x: format(int(x), ",d"))
+
+        columns = [{"name": col, "id": col} for col in final_df.columns]
+        data = final_df.to_dict("records")
+        
+        return f"Ergebnisse berechnet: {len(final_df)} Gruppen gefunden.", data, columns
+
+
+
+    return "", [], []
+
+
 
 
 # ---------------- Excel export video  ----------------
-
 
 @app.callback(
     Output("download", "data"),
@@ -653,7 +818,7 @@ def export_to_excel(n_clicks):
         for i, col in enumerate(df.columns):
             col_letter = get_column_letter(i+1)
             # Für "reach": Zahl mit 2 Dezimalstellen
-            if col.lower() == ["reach", "ratings_14+", "tv_ratings_14+"]:
+            if col.lower() == ["reach", "sponsorship_contacts", "ratings_14+", "tv_ratings_14+"]:
                 for cell in worksheet[col_letter][1:]:  # Überspringe den Header
                     cell.number_format = '0.00'
             # Für "broadcasting_time", "visibility" und "apt": Format h:mm:ss
@@ -669,6 +834,51 @@ def export_to_excel(n_clicks):
     # Sende die Bytes als Download zurück
     return dcc.send_bytes(output.getvalue(), "report_video.xlsx")
 
+# ---------------- bASECHECK ----------------
+
+@app.callback(
+    [Output("basecheck-status", "children"),
+     Output("basecheck-table", "data"),
+     Output("basecheck-table", "columns")],
+    Input("calculate-basecheck", "n_clicks"),
+    State("mm-dimensions-basecheck", "value")
+)
+def calculate_basecheck(n_clicks, mm_dims):
+    if not n_clicks:
+        return "", [], []
+    if not mm_dims:
+        return "Bitte wählen Sie mindestens eine MM-Dimension aus.", [], []
+    
+    db_path = "data.db"
+    conn = sqlite3.connect(db_path)
+    # Lese die Tabelle video (die beide Datensätze enthält)
+    df = pd.read_sql("SELECT * FROM data", conn)
+    conn.close()
+    
+    if df.empty:
+        return "Die Tabelle video_final ist leer.", [], []
+    
+    # Filtere nur Zeilen mit hr_basis "Basis" oder "HR"
+    df = df[df['hr_basis'].isin(['Basis', 'HR'])]
+    
+    # Gruppiere nach den ausgewählten Dimensionen plus hr_basis und berechne count(distinct bid)
+    grouped = df.groupby(mm_dims + ['hr_basis'], as_index=False)['bid'].nunique()
+    
+    # Pivot: Index = die in mm_dims gewählten Dimensionen, Spalten = hr_basis
+    pivot_df = grouped.pivot_table(index=mm_dims, columns='hr_basis', values='bid', fill_value=0).reset_index()
+    
+    # Umbenennen der Pivot-Spalten
+    pivot_df.rename(columns={'Basis': 'bid_count_basis', 'HR': 'bid_count_hr'}, inplace=True)
+    
+    # Formatierung: Bid Count als Ganzzahl mit Tausendertrennzeichen
+    pivot_df["bid_count_basis"] = pivot_df["bid_count_basis"].apply(lambda x: format(int(x), ",d"))
+    pivot_df["bid_count_hr"] = pivot_df["bid_count_hr"].apply(lambda x: format(int(x), ",d"))
+    
+    # Erstelle Spaltenliste und Daten für die DataTable
+    columns = [{"name": col, "id": col} for col in pivot_df.columns]
+    data = pivot_df.to_dict("records")
+    
+    return f"Basecheck: {len(pivot_df)} Gruppen gefunden.", data, columns
 
 
 
