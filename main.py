@@ -9,7 +9,7 @@ from io import BytesIO
 import openpyxl
 from openpyxl.utils import get_column_letter
 
-app = Dash(__name__)
+app = Dash(__name__, title="IRIS-Extrapolator")
 
 # ---------------- Hilfsfunktionen ----------------
 
@@ -201,23 +201,31 @@ app.layout = html.Div([
             html.H2("Aggregierte Datenanzeige"),
             html.Div([
                 html.Div([
-                    html.H3("TV/OTT & Social Media (Video)"),
+                    html.H3("Import Bewegtbild"),
                     dash_table.DataTable(
                         id="aggregated-table-1",
                         columns=[],
                         data=[],
                         style_table={'overflowX': 'auto'},
-                        style_cell={'textAlign': 'left'}
+                        style_cell={'textAlign': 'left'},
+                        style_header={
+                            'backgroundColor': '#73b8e6',
+                            'color': 'white'
+                        }
                     )
-                ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top'}),
+                ], style={'width': '33%', 'display': 'inline-block', 'vertical-align': 'top', 'margin-right': '20px'}),
                 html.Div([
-                    html.H3("Print, Online & Social Media (nicht Video)"),
+                    html.H3("Import Nicht-Bewegtbild"),
                     dash_table.DataTable(
                         id="aggregated-table-2",
                         columns=[],
                         data=[],
                         style_table={'overflowX': 'auto'},
-                        style_cell={'textAlign': 'left'}
+                        style_cell={'textAlign': 'left'},
+                        style_header={
+                            'backgroundColor': '#73b8e6',
+                            'color': 'white'
+                        }
                     )
                 ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top'})
             ])
@@ -233,8 +241,6 @@ app.layout = html.Div([
                         selected_style={'backgroundColor': '#73b8e6', 'color': 'white'},
                         children=[
                             html.H1("Bewegtbild – Hochrechnung"),
-                            html.Button("DB erstellen", id="create-db-video", style={'backgroundColor': 'blue', 'color': 'white'}),
-                            html.Div(id="create-db-status", style={'margin-top': '10px'}),
                             html.Br(),
                             html.Div([
                                 html.Div([
@@ -397,10 +403,113 @@ app.layout = html.Div([
             )
         ])
         ,
-                dcc.Tab(label="Nicht-Bewegtbild", selected_style={'backgroundColor': '#da8d00', 'color': 'white'}, children=[
-                    html.H1("Nicht-Bewegtbild"),
-                    html.Div("Platzhalter – hier folgt in Kürze die Implementierung.")
-                ])
+        dcc.Tab(label="Nicht-Bewegtbild", selected_style={'backgroundColor': '#da8d00', 'color': 'white'}, children=[
+            dcc.Tabs(
+                id="nicht-bewegtbild-subtabs",
+                value="hochrechnung_nbv",  # Standardmäßig aktiver Untertab
+                children=[
+            dcc.Tab(
+                label="Hochrechnung",
+                value="hochrechnung_nbv",
+                selected_style={'backgroundColor': '#73b8e6', 'color': 'white'},
+                children=[
+                    html.H1("Nicht-Bewegtbild – Hochrechnung"),
+                    html.Div([
+                        html.Div([
+                            html.H3("MM-Dimensionen (Non-Video)"),
+                            dcc.Dropdown(
+                                id='mm-dimensions2',
+                                options=[
+                                    {'label': 'media', 'value': 'media'},
+                                    {'label': 'region', 'value': 'region'},
+                                    {'label': 'country', 'value': 'country'},
+                                    {'label': 'broadcaster', 'value': 'broadcaster'},
+                                    {'label': 'channel', 'value': 'channel'},
+                                    {'label': 'genre', 'value': 'genre'},
+                                    {'label': 'sports', 'value': 'sports'},
+                                    {'label': 'competition', 'value': 'competition'},
+                                    {'label': 'season', 'value': 'season'},
+                                    {'label': 'event', 'value': 'event'},
+                                    {'label': 'venue', 'value': 'venue'},
+                                    {'label': 'event_country', 'value': 'event_country'},
+                                    {'label': 'post_type', 'value': 'post_type'},
+                                    {'label': 'owned_channel', 'value': 'owned_channel'},
+                                    {'label': 'discipline', 'value': 'discipline'},
+                                    {'label': 'j1', 'value': 'j1'},
+                                    {'label': 'j2', 'value': 'j2'},
+                                    {'label': 'j3', 'value': 'j3'},
+                                    {'label': 'j4', 'value': 'j4'},
+                                    {'label': 'j5', 'value': 'j5'},
+                                    {'label': 'hr1', 'value': 'hr1'},
+                                    {'label': 'hr2', 'value': 'hr2'},
+                                    {'label': 'hr3', 'value': 'hr3'},
+                                    {'label': 'hr4', 'value': 'hr4'},
+                                    {'label': 'hr5', 'value': 'hr5'}
+                                ],
+                                multi=True,
+                                placeholder="Wählen Sie MM-Dimensionen..."
+                            )
+                        ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top', 'padding-right': '2%'}),
+                        html.Div([
+                            html.H3("EA-Dimensionen (Non-Video)"),
+                            dcc.Dropdown(
+                                id='ea-dimensions2',
+                                options=[
+                                    {'label': 'company', 'value': 'company'},
+                                    {'label': 'sponsor', 'value': 'sponsor'},
+                                    {'label': 'tool', 'value': 'tool'},
+                                    {'label': 'personal_sponsorship', 'value': 'personal_sponsorship'},
+                                    {'label': 'tool_location', 'value': 'tool_location'}
+                                ],
+                                multi=True,
+                                placeholder="Wählen Sie EA-Dimensionen..."
+                            )
+                        ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top'})
+                    ])
+
+                    ,
+                    html.Br(),
+                    html.Button("Berechne Prozentwerte Non-Video", id="calculate-percentages2_nbv", style={'backgroundColor': 'green', 'color': 'white'}),
+                    html.Div(id="nonvideo-percentages-status", style={'margin-top': '10px'}),
+                    html.Br(),
+                    dash_table.DataTable(
+                        id="nonvideo-percentages-table",
+                        columns=[],  # wird dynamisch gesetzt
+                        data=[],     # wird dynamisch gesetzt
+                        editable=False,
+                        filter_action="native",
+                        sort_action="native",
+                        sort_mode="multi",
+                        style_table={'overflowX': 'auto'},
+                        style_cell={'textAlign': 'left'}
+                    )
+                ]
+            )
+
+                    ,
+                    dcc.Tab(
+                        label="Ergebnisse",
+                        value="ergebnisse_nbv",
+                        selected_style={'backgroundColor': '#e74c3c', 'color': 'white'},
+                        children=[
+                            html.H1("Nicht-Bewegtbild – Ergebnisse"),
+                            html.Div("Platzhalter – hier folgen die Ergebnisse für Nicht-Bewegtbild.")
+                        ]
+                    ),
+                    dcc.Tab(
+                        label="Basecheck",
+                        value="basecheck_nbv",
+                        selected_style={'backgroundColor': '#e74c3c', 'color': 'white'},
+                        children=[
+                            html.H1("Nicht-Bewegtbild – Basecheck"),
+                            html.Div("Platzhalter – hier folgen Basecheck-Informationen für Nicht-Bewegtbild.")
+                        ]
+                    )
+                ]
+            )
+        ])
+
+
             ])
         ])
 
@@ -431,6 +540,38 @@ def update_on_upload(list_of_contents, list_of_names, mode):
             update_database(df, mode, first_file)
             first_file = False
             status_messages.append(f"Datei {filename} importiert.")
+        
+        # Automatische Erstellung der Tabelle "video"
+        db_path = "data.db"
+        conn = sqlite3.connect(db_path)
+        query_video = """
+            SELECT *
+            FROM data
+            WHERE (media = 'TV/OTT' OR (media = 'Social Media' AND post_type = 'Video'))
+        """
+        df_video = pd.read_sql(query_video, conn)
+        conn.close()
+        conn = sqlite3.connect(db_path)
+        df_video.to_sql("video", conn, if_exists="replace", index=False)
+        conn.close()
+        status_messages.append(f"Tabelle 'video' in data.db erstellt: {len(df_video)} Zeilen wurden gespeichert.")
+        
+        # Automatische Erstellung der Tabelle "non_video"
+        conn = sqlite3.connect(db_path)
+        query_non_video = """
+            SELECT *
+            FROM data
+            WHERE media IN ('Print', 'Online', 'Social Media')
+              AND post_type <> 'Video'
+        """
+        df_non_video = pd.read_sql(query_non_video, conn)
+        conn.close()
+        conn = sqlite3.connect(db_path)
+        df_non_video.to_sql("non_video", conn, if_exists="replace", index=False)
+        conn.close()
+        status_messages.append(f"Tabelle 'non_video' in data.db erstellt: {len(df_non_video)} Zeilen wurden gespeichert.")
+        
+        # Anschließend werden die aggregierten Daten geladen (wie bisher)
         df_agg1 = get_aggregated_data()
         if not df_agg1.empty:
             columns1 = [{"name": col, "id": col} for col in df_agg1.columns]
@@ -445,31 +586,15 @@ def update_on_upload(list_of_contents, list_of_names, mode):
         else:
             columns2 = []
             data2 = []
+        
         return html.Div([html.Div(msg) for msg in status_messages]), data1, columns1, data2, columns2
     return "", [], [], [], []
 
+
+
 # ---------------- Callback: Neue Tabelle "video" in data.db erstellen ----------------
 
-@app.callback(
-    Output("create-db-status", "children"),
-    Input("create-db-video", "n_clicks")
-)
-def create_video_db(n_clicks):
-    if not n_clicks:
-        return ""
-    db_path = "data.db"
-    conn = sqlite3.connect(db_path)
-    query = """
-    SELECT *
-    FROM data
-    WHERE (media = 'TV/OTT' OR (media = 'Social Media' AND post_type = 'Video'))
-    """
-    df = pd.read_sql(query, conn)
-    conn.close()
-    conn = sqlite3.connect(db_path)
-    df.to_sql("video", conn, if_exists="replace", index=False)
-    conn.close()
-    return f"Tabelle 'video' in data.db erstellt: {len(df)} Zeilen wurden gespeichert."
+
 
 # ---------------- Callback: Prozentwerte berechnen und in Tabelle "percent" speichern ----------------
 
@@ -880,6 +1005,105 @@ def calculate_basecheck(n_clicks, mm_dims):
     
     return f"Basecheck: {len(pivot_df)} Gruppen gefunden.", data, columns
 
+#..............................................................NICHT BEWEGTBILD...............................................................
+
+
+@app.callback(
+    [Output("nonvideo-percentages-status", "children"),
+     Output("nonvideo-percentages-table", "data"),
+     Output("nonvideo-percentages-table", "columns")],
+    Input("calculate-percentages2_nbv", "n_clicks"),
+    State("mm-dimensions2", "value"),
+    State("ea-dimensions2", "value")
+)
+def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
+    if not n_clicks:
+        return "", [], []
+    
+    # Für die Gesamt-Gruppierung (ea_hits) verwenden wir alle ausgewählten Felder:
+    group_by_all = []
+    if mm_dims:
+        group_by_all.extend(mm_dims)
+    if ea_dims:
+        group_by_all.extend(ea_dims)
+    
+    # Falls keine Dimension gewählt wurde, Fehler zurückgeben.
+    if not group_by_all:
+        return "Bitte wählen Sie mindestens eine Dimension aus.", [], []
+    
+    db_path = "data.db"
+    conn = sqlite3.connect(db_path)
+    # Lese alle Nicht-Video-Daten (Tabelle non_video)
+    df_nonvideo = pd.read_sql("SELECT * FROM non_video", conn)
+    
+    # Berechne den konstanten Wert: distinct bid über alle Zeilen mit hr_basis = 'Basis'
+    distinct_bid_query = "SELECT COUNT(DISTINCT bid) AS bid_count FROM non_video WHERE hr_basis = 'Basis'"
+    df_const = pd.read_sql(distinct_bid_query, conn)
+    conn.close()
+    
+    if df_nonvideo.empty:
+        return "Die Tabelle non_video ist leer.", [], []
+    
+    # Filtere nur Zeilen mit hr_basis = "Basis"
+    df_basis = df_nonvideo[df_nonvideo['hr_basis'] == 'Basis']
+    
+    # Gesamtwert (konstant) für alle Basis-Zeilen:
+    overall_bid_count = df_basis['bid'].nunique()
+    
+    # Gruppierung 1: bid_mm_kombo – gruppiere nach mm-dimensions2 (nur mm_dims)
+    if mm_dims:
+        bid_mm_df = df_basis.groupby(mm_dims, as_index=False)['bid'].nunique()
+        bid_mm_df.rename(columns={'bid': 'bid_mm_kombo'}, inplace=True)
+    else:
+        bid_mm_df = pd.DataFrame()
+    
+    # Gruppierung 2: ea_hits – gruppiere nach allen ausgewählten Feldern (mm + ea), also group_by_all
+    ea_hits_df = df_basis.groupby(group_by_all, as_index=False)['bid'].nunique()
+    ea_hits_df.rename(columns={'bid': 'ea_hits'}, inplace=True)
+    
+    # Basis-Ergebnis: Alle eindeutigen Kombinationen der in group_by_all gewählten Felder
+    df_groups = df_basis[group_by_all].drop_duplicates().reset_index(drop=True)
+    
+    # Merge: Zuerst mit bid_mm_df (auf mm_dims, falls vorhanden)
+    if mm_dims:
+        df_result = pd.merge(df_groups, bid_mm_df, on=mm_dims, how='left')
+    else:
+        df_result = df_groups.copy()
+    # Dann mit ea_hits_df auf allen group_by_all Feldern
+    df_result = pd.merge(df_result, ea_hits_df, on=group_by_all, how='left')
+    
+    # Berechne die Hit Percentage: (ea_hits / bid_mm_kombo) * 100 (nur wenn bid_mm_kombo > 0)
+    # Wichtig: Hier arbeiten wir mit den numerischen Werten, bevor wir sie formatieren.
+    df_result["hit_percentage"] = df_result.apply(
+        lambda row: (row["ea_hits"] / row["bid_mm_kombo"] * 100) if (row.get("bid_mm_kombo", 0) > 0) else 0, axis=1
+    )
+    
+    # Optional: Füge den konstanten Gesamtwert als eigene Kennzahl hinzu.
+    df_result["overall_bid_count"] = overall_bid_count
+    
+    # Filtere: Zeige nur Gruppen, bei denen ea_hits > 0 sind.
+    df_result = df_result[df_result["ea_hits"] > 0]
+    
+    # Formatierung: Wandle die Kennzahlen in Ganzzahlen mit Tausendertrennzeichen um, 
+    # und hit_percentage als Zahl mit zwei Dezimalstellen (als String, ohne Prozentzeichen)
+    if "bid_mm_kombo" in df_result.columns:
+        df_result["bid_mm_kombo"] = df_result["bid_mm_kombo"].fillna(0).apply(lambda x: format(int(x), ",d"))
+    if "ea_hits" in df_result.columns:
+        df_result["ea_hits"] = df_result["ea_hits"].fillna(0).apply(lambda x: format(int(x), ",d"))
+    df_result["hit_percentage"] = df_result["hit_percentage"].apply(lambda x: f"{x:.2f}")
+    df_result["overall_bid_count"] = df_result["overall_bid_count"].fillna(0).apply(lambda x: format(int(x), ",d"))
+    
+    # Erstelle Spaltenliste für die DataTable
+    columns = [{"name": col, "id": col} for col in df_result.columns]
+    data = df_result.to_dict("records")
+    
+    # Schreibe das Ergebnis in die Datenbank-Tabelle "percent_non_video"
+    conn = sqlite3.connect(db_path)
+    df_result.to_sql("percent_non_video", conn, if_exists="replace", index=False)
+    conn.close()
+    
+    status_msg = f"Basecheck Non-Video: {len(df_result)} Gruppen gefunden. (Distinct bid Gesamt: {overall_bid_count:,})"
+    return status_msg, data, columns
 
 
 # ---------------- Main ----------------
