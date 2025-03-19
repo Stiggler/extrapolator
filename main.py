@@ -1009,6 +1009,7 @@ def calculate_basecheck(n_clicks, mm_dims):
 #..............................................................NICHT BEWEGTBILD...............................................................
 
 
+
 @app.callback(
     [Output("nonvideo-percentages-status", "children"),
      Output("nonvideo-percentages-table", "data"),
@@ -1046,29 +1047,29 @@ def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
     
     # Filtere nur Zeilen mit hr_basis = "Basis"
     df_basis = df_nonvideo[df_nonvideo['hr_basis'] == 'Basis']
-    
-    # Gesamtwert (konstant) für alle Basis-Zeilen:
     overall_bid_count = df_basis['bid'].nunique()
     
-    # Neue Kennzahl 1: Durchschnittlicher Weighting Factor (nur Basis-Zeilen)
-    # Der durchschnittliche Wert wird als Prozentsatz (multipliziert mit 100) formatiert, aber ohne das Prozentzeichen.
-    if "ave_weighting_factor" in df_basis.columns and not df_basis["ave_weighting_factor"].empty:
-        avg_weighting = df_basis["ave_weighting_factor"].mean() * 100
+    # Kennzahl 1: avg_weighting_factor – Durchschnitt der Spalte ave_weighting_factor (nur Basis)
+    overall_avg_weighting = df_basis["ave_weighting_factor"].mean() * 100
+    if ea_dims:
+        avg_weighting_df = df_basis.groupby(ea_dims, as_index=False)["ave_weighting_factor"].mean()
+        avg_weighting_df["avg_weighting_factor"] = avg_weighting_df["ave_weighting_factor"] * 100
+        avg_weighting_df.drop(columns=["ave_weighting_factor"], inplace=True)
     else:
-        avg_weighting = 0.0
+        avg_weighting_df = None
 
-    # Gruppierung 1: bid_mm_kombo – gruppiere nach mm-dimensions2 (nur mm_dims) für Basis
+    # Gruppierung 1: bid_mm_kombo – gruppiere nach mm-dimensions2 (Basis)
     if mm_dims:
         bid_mm_df = df_basis.groupby(mm_dims, as_index=False)['bid'].nunique()
         bid_mm_df.rename(columns={'bid': 'bid_mm_kombo'}, inplace=True)
     else:
         bid_mm_df = pd.DataFrame()
     
-    # Gruppierung 2: ea_hits – gruppiere nach allen ausgewählten Feldern (mm + ea), also group_by_all, für Basis
+    # Gruppierung 2: ea_hits – gruppiere nach allen ausgewählten Feldern (Basis)
     ea_hits_df = df_basis.groupby(group_by_all, as_index=False)['bid'].nunique()
     ea_hits_df.rename(columns={'bid': 'ea_hits'}, inplace=True)
     
-    # Neue Kennzahl 2: bid_mm_kombo_hr – berechnet die distinct bids, aber für hr_basis = "HR", gruppiert nach mm-dimensions2
+    # Kennzahl 2: bid_mm_kombo_hr – für HR-Zeilen, gruppiert nach mm-dimensions2
     if mm_dims:
         df_hr = df_nonvideo[df_nonvideo['hr_basis'] == 'HR']
         bid_mm_hr_df = df_hr.groupby(mm_dims, as_index=False)['bid'].nunique()
@@ -1076,7 +1077,7 @@ def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
     else:
         bid_mm_hr_df = pd.DataFrame()
     
-    # Basis-Ergebnis: Alle eindeutigen Kombinationen der in group_by_all gewählten Felder
+    # Basis-Ergebnis: Alle eindeutigen Kombinationen der in group_by_all gewählten Felder (Basis)
     df_groups = df_basis[group_by_all].drop_duplicates().reset_index(drop=True)
     
     # Merge: Zuerst mit bid_mm_df (auf mm_dims, falls vorhanden)
@@ -1090,20 +1091,37 @@ def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
     if mm_dims:
         df_result = pd.merge(df_result, bid_mm_hr_df, on=mm_dims, how='left')
     
-    # Füge den konstanten Gesamtwert als eigene Kennzahl hinzu.
+    # Füge den konstanten Gesamtwert hinzu
     df_result["overall_bid_count"] = overall_bid_count
-    # Füge den durchschnittlichen Weighting Factor als eigene Kennzahl hinzu.
-    df_result["avg_weighting_factor"] = avg_weighting
 
+    # Merge avg_weighting_factor basierend auf EA-Dimensionen, falls vorhanden, sonst Gesamtwert
+    if ea_dims:
+        df_result = pd.merge(df_result, avg_weighting_df, on=ea_dims, how='left')
+    else:
+        df_result["avg_weighting_factor"] = overall_avg_weighting
+    
     # Berechne die Hit Percentage: (ea_hits / bid_mm_kombo) * 100 (nur wenn bid_mm_kombo > 0)
     df_result["hit_percentage"] = df_result.apply(
         lambda row: (row["ea_hits"] / row["bid_mm_kombo"] * 100) if (row.get("bid_mm_kombo", 0) > 0) else 0, axis=1
     )
     
-    # Filtere: Zeige nur Gruppen, bei denen ea_hits > 0 sind.
+    # Neue Kennzahl: ids_for_HR = bid_mm_kombo_hr * hit_percentage, gerundet auf Ganzzahl
+    df_result["ids_for_HR"] = df_result["bid_mm_kombo_hr"] * df_result["hit_percentage"]
+    df_result["ids_for_HR"] = df_result["ids_for_HR"].apply(lambda x: round(x) if pd.notna(x) else 0)
+    
+    # Neue Kennzahl: avg_mentions = (Summe der mentions pro Gruppe) / ea_hits, gerundet, mindestens 1.
+    # Hier gruppieren wir nach allen ausgewählten Feldern (group_by_all), damit fließen auch die MM-Dimensionen mit ein.
+    mentions_df = df_basis.groupby(group_by_all, as_index=False)['mentions'].sum()
+    mentions_df.rename(columns={'mentions': 'sum_mentions'}, inplace=True)
+    df_result = pd.merge(df_result, mentions_df, on=group_by_all, how='left')
+    df_result["avg_mentions"] = df_result.apply(
+        lambda row: max(round(row["sum_mentions"] / row["ea_hits"]), 1) if row["ea_hits"] > 0 else 1, axis=1
+    )
+    
+    # Filtere: Nur Gruppen, bei denen ea_hits > 0
     df_result = df_result[df_result["ea_hits"] > 0]
     
-    # Formatierung: Wandle die numerischen Kennzahlen in Ganzzahlen mit Tausendertrennzeichen um und hit_percentage, avg_weighting_factor als Zahl mit zwei Dezimalstellen.
+    # Formatierung: Wandle numerische Kennzahlen in formatierten Text um.
     if "bid_mm_kombo" in df_result.columns:
         df_result["bid_mm_kombo"] = df_result["bid_mm_kombo"].fillna(0).apply(lambda x: format(int(x), ",d"))
     if "bid_mm_kombo_hr" in df_result.columns:
@@ -1113,8 +1131,9 @@ def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
     df_result["hit_percentage"] = df_result["hit_percentage"].apply(lambda x: f"{x:.2f}")
     df_result["overall_bid_count"] = df_result["overall_bid_count"].fillna(0).apply(lambda x: format(int(x), ",d"))
     df_result["avg_weighting_factor"] = df_result["avg_weighting_factor"].apply(lambda x: f"{x:.2f}")
+    df_result["ids_for_HR"] = df_result["ids_for_HR"].apply(lambda x: format(int(x), ",d"))
+    df_result["avg_mentions"] = df_result["avg_mentions"].apply(lambda x: format(int(x), ",d"))
     
-    # Erstelle Spaltenliste für die DataTable
     columns = [{"name": col, "id": col} for col in df_result.columns]
     data = df_result.to_dict("records")
     
@@ -1125,6 +1144,8 @@ def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
     
     status_msg = f"Basecheck Non-Video: {len(df_result)} Gruppen gefunden. (Distinct bid Gesamt: {overall_bid_count:,})"
     return status_msg, data, columns
+
+
 
 
 
