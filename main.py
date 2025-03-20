@@ -5,6 +5,8 @@ import pandas as pd
 import dash
 from dash import Dash, dcc, html, dash_table, Input, Output, State
 import math
+import random 
+import numpy as np
 from io import BytesIO
 import openpyxl
 from openpyxl.utils import get_column_letter
@@ -472,6 +474,8 @@ app.layout = html.Div([
                     html.Br(),
                     html.Button("Berechne Prozentwerte Non-Video", id="calculate-percentages2_nbv", style={'backgroundColor': 'green', 'color': 'white'}),
                     html.Div(id="nonvideo-percentages-status", style={'margin-top': '10px'}),
+                    html.Button("Extrapolate Non-Video", id="extrapolate-nonvideo", style={'backgroundColor': 'purple', 'color': 'white'}),
+                    html.Div(id="extrapolate-nonvideo-status", style={'margin-top': '10px'}),
                     html.Br(),
                     dash_table.DataTable(
                         id="nonvideo-percentages-table",
@@ -1106,7 +1110,7 @@ def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
     )
     
     # Neue Kennzahl: ids_for_HR = bid_mm_kombo_hr * hit_percentage, gerundet auf Ganzzahl
-    df_result["ids_for_HR"] = df_result["bid_mm_kombo_hr"] * df_result["hit_percentage"]
+    df_result["ids_for_HR"] = df_result["bid_mm_kombo_hr"] * df_result["hit_percentage"]/100
     df_result["ids_for_HR"] = df_result["ids_for_HR"].apply(lambda x: round(x) if pd.notna(x) else 0)
     
     # Neue Kennzahl: avg_mentions = (Summe der mentions pro Gruppe) / ea_hits, gerundet, mindestens 1.
@@ -1144,6 +1148,166 @@ def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
     
     status_msg = f"Basecheck Non-Video: {len(df_result)} Gruppen gefunden. (Distinct bid Gesamt: {overall_bid_count:,})"
     return status_msg, data, columns
+
+#--------------non vido HR---------------------------
+
+@app.callback(
+    Output("extrapolate-nonvideo-status", "children"),
+    Input("extrapolate-nonvideo", "n_clicks"),
+    State("mm-dimensions2", "value"),
+    State("ea-dimensions2", "value")
+)
+def extrapolate_nonvideo(n_clicks, mm_dims2, ea_dims2):
+    if not n_clicks:
+        return ""
+
+    db_path = "data.db"
+    try:
+        # 1) Lade Aggregations-Tabelle (percent_non_video) und Originaldaten (non_video)
+        conn = sqlite3.connect(db_path)
+        df_percent = pd.read_sql("SELECT * FROM percent_non_video", conn)
+        df_nonvideo = pd.read_sql("SELECT * FROM non_video", conn)
+        conn.close()
+    except Exception as e:
+        return f"Fehler beim Laden der Tabellen: {e}"
+
+    # Sicherheitsabfragen
+    if df_percent.empty:
+        return "Die Tabelle percent_non_video ist leer."
+    if df_nonvideo.empty:
+        return "Die Tabelle non_video ist leer."
+
+    # 2) Bestimme MM-Dimensionen
+    # Falls keine Auswahl, kannst du einen Fallback definieren oder eine Fehlermeldung zurückgeben
+    if not mm_dims2:
+        # Beispiel-Fallback oder Abbruch
+        return "Keine MM-Dimensionen ausgewählt."
+
+    # 3) Ergebnisliste für neue HR-Zeilen
+    result_rows = []
+
+    # 4) Iteriere über jede Zeile in percent_non_video
+    for idx, percent_row in df_percent.iterrows():
+        # Auslesen der Anzahl an HR-Zeilen, die erstellt werden sollen
+        ids_for_hr = 0
+        try:
+            # Achtung auf Kommas oder Punkt in Strings:
+            ids_for_hr = int(float(str(percent_row.get("ids_for_HR", 0)).replace(",", ".")))
+        except:
+            pass
+
+        # Wenn keine Zeilen gefordert sind, nächste Zeile
+        if ids_for_hr <= 0:
+            continue
+
+        # Start: Alle non_video-Zeilen mit hr_basis "HR"
+        df_candidates = df_nonvideo[df_nonvideo["hr_basis"].str.upper() == "HR"].copy()
+
+        # Für jede in mm-dimensions2 ausgewählte Dimension:
+        for dim in mm_dims2:
+            # Den in percent_non_video für die Gruppe definierten Wert holen
+            val_in_percent = str(percent_row.get(dim, ""))
+            # Und nur die Zeilen behalten, bei denen non_video[dim] genau diesem Wert entspricht
+            df_candidates = df_candidates[df_candidates[dim].astype(str) == val_in_percent]
+
+        # Falls keine Kandidaten vorhanden, überspringen
+        if df_candidates.empty:
+            continue
+
+        # 6) Zufällige Auswahl (sample_size = min(ids_for_hr, anzahl_kandidaten)
+        sample_size = ids_for_hr  # Nimm exakt die Anzahl aus ids_for_hr
+        df_sampled = df_candidates.sample(
+            n=sample_size,
+            replace=True,       # <--- Wichtig: Mit Replacement
+            random_state=None
+        )
+
+        # 6) Zufällige Auswahl: Zuerst alle vorhandenen Kandidaten ohne Replacement
+        sampled = df_candidates.sample(n=len(df_candidates), replace=False)
+        selected_rows = sampled.to_dict(orient="records")
+
+        # Wenn die vorhandenen Kandidaten weniger sind als ids_for_hr,
+        # erweitern wir die Liste, indem wir zusätzliche Zeilen generieren.
+        n_needed = ids_for_hr
+        import uuid
+        while len(selected_rows) < n_needed:
+            # Wähle zufällig eine Kandidatenzeile
+            cand_row = df_candidates.sample(n=1, replace=False).iloc[0].to_dict()
+            # Vergib einen neuen, eindeutigen BID
+            cand_row["bid"] = str(uuid.uuid4())
+            selected_rows.append(cand_row)
+
+
+        # 7) Für jede zufällig ausgewählte Zeile: Kopie erstellen und Felder überschreiben
+        for _, cand_row in df_sampled.iterrows():
+            new_row = cand_row.copy()
+
+            # (a) EA-Dimensionen überschreiben (z.B. sponsor, tool, personal_sponsorship, etc.)
+            if ea_dims2:
+                for ea_dim in ea_dims2:
+                    if ea_dim in percent_row:
+                        new_row[ea_dim] = percent_row[ea_dim]
+
+            # (b) mentions überschreiben
+            # Achtung auf Datentyp (String -> int). Falls "avg_mentions" in percent_non_video so heißt:
+            if "avg_mentions" in df_percent.columns:
+                try:
+                    new_row["mentions"] = int(float(str(percent_row["avg_mentions"]).replace(",", ".")))
+                except:
+                    new_row["mentions"] = 1  # minimal 1
+
+            # (c) avg_weighting_factor übernehmen
+            # Hier musst du ggf. entscheiden, ob der Wert als Prozent (z.B. "35.83") oder Faktor (0.3583) zu interpretieren ist
+            if "avg_weighting_factor" in df_percent.columns:
+                try:
+                    # Beispiel: wenn in percent_non_video "35.83" bedeutet 35.83% -> 0.3583
+                    factor_str = str(percent_row["avg_weighting_factor"]).replace(",", ".")
+                    factor_float = float(factor_str) / 100.0
+                    new_row["avg_weighting_factor"] = factor_float
+                except:
+                    new_row["avg_weighting_factor"] = 0.0
+
+            # (d) pr_value setzen (z.B. aus "ave_100")
+            if "ave_100" in df_percent.columns:
+                try:
+                    pr_str = str(percent_row["ave_100"]).replace(",", ".")
+                    pr_val = float(pr_str)
+                    new_row["pr_value"] = pr_val
+                except:
+                    new_row["pr_value"] = 0.0
+
+            # (e) ave_weighted berechnen
+            try:
+                new_row["ave_weighted"] = new_row["pr_value"] * new_row["avg_weighting_factor"]
+            except:
+                new_row["ave_weighted"] = 0.0
+
+            # (f) hr_basis ggf. auf "HR" setzen
+            new_row["hr_basis"] = "HR"
+
+            # Füge die neue Zeile der Ergebnisliste hinzu
+            result_rows.append(new_row)
+
+    # 8) Falls keine neuen Zeilen erstellt wurden -> Meldung
+    if not result_rows:
+        return "Keine HR-Zeilen extrapoliert."
+
+    # 9) Ergebnis-DatenFrame erstellen und in DB speichern
+    df_hr_nonvideo = pd.DataFrame(result_rows)
+
+    try:
+        conn = sqlite3.connect(db_path)
+        df_hr_nonvideo.to_sql("hr_non_bewegt", conn, if_exists="replace", index=False)
+        conn.close()
+        # Summiere nochmal die Zeilen für die Meldung
+        msg = (
+            f"HR Non-Video-Daten extrapoliert: {len(df_hr_nonvideo)} neue Zeilen "
+            f"(Summe ids_for_HR = {df_percent['ids_for_HR'].sum()})."
+        )
+    except Exception as e:
+        msg = f"Fehler beim Speichern in 'hr_non_bewegt': {e}"
+
+    return msg
 
 
 
