@@ -153,8 +153,8 @@ def get_aggregated_data_opposite():
         SUM(mentions) AS sum_mentions
     FROM data
     WHERE media IN ('Print', 'Online', 'Social Media')
-      AND post_type NOT IN ('Video', 'Story')
-    GROUP BY TRIM(hr_basis);
+      AND (post_type IS NULL OR post_type = '' OR post_type NOT IN ('Video', 'Story'))
+        GROUP BY TRIM(hr_basis);
     """
     df = pd.read_sql(query, conn)
     conn.close()
@@ -498,6 +498,8 @@ app.layout = html.Div([
                         selected_style={'backgroundColor': '#e74c3c', 'color': 'white'},
                         children=[
                             html.H1("Nicht-Bewegtbild – Ergebnisse"),
+                            html.Button("Export Nicht-Bewegtbild", id="export-nonvideo-button", style={'backgroundColor': 'darkgreen', 'color': 'white', 'margin-left': '10px'}),
+                            dcc.Download(id="download1"),
                             html.Div("Platzhalter – hier folgen die Ergebnisse für Nicht-Bewegtbild.")
                         ]
                     ),
@@ -567,7 +569,7 @@ def update_on_upload(list_of_contents, list_of_names, mode):
             SELECT *
             FROM data
             WHERE media IN ('Print', 'Online', 'Social Media')
-              AND post_type NOT IN ('Video', 'Story')
+              AND (post_type IS NULL OR post_type = '' OR post_type NOT IN ('Video', 'Story'))
         """
         df_non_video = pd.read_sql(query_non_video, conn)
         conn.close()
@@ -1256,31 +1258,40 @@ def extrapolate_nonvideo(n_clicks, mm_dims2, ea_dims2):
                 except:
                     new_row["mentions"] = 1  # minimal 1
 
+            new_row = cand_row.copy()  # oder aus deiner sample-Auswahl
             # (c) avg_weighting_factor übernehmen
-            # Hier musst du ggf. entscheiden, ob der Wert als Prozent (z.B. "35.83") oder Faktor (0.3583) zu interpretieren ist
-            if "avg_weighting_factor" in df_percent.columns:
-                try:
-                    # Beispiel: wenn in percent_non_video "35.83" bedeutet 35.83% -> 0.3583
-                    factor_str = str(percent_row["avg_weighting_factor"]).replace(",", ".")
-                    factor_float = float(factor_str) / 100.0
-                    new_row["avg_weighting_factor"] = factor_float
-                except:
-                    new_row["avg_weighting_factor"] = 0.0
+            # 1. ave_100 eintragen: Wert von pr_value übernehmen
+            new_row['ave_100'] = new_row.get('pr_value')
 
-            # (d) pr_value setzen (z.B. aus "ave_100")
-            if "ave_100" in df_percent.columns:
-                try:
-                    pr_str = str(percent_row["ave_100"]).replace(",", ".")
-                    pr_val = float(pr_str)
-                    new_row["pr_value"] = pr_val
-                except:
-                    new_row["pr_value"] = 0.0
 
-            # (e) ave_weighted berechnen
+
+            # Nehme den Wert aus percent_row, falls vorhanden:
+            if 'avg_weighting_factor' in percent_row:
+                new_row['ave_weighting_factor'] = percent_row['avg_weighting_factor']
+            else:
+                new_row['ave_weighting_factor'] = None
+
+            # (e) ave_weighted berechnen, hier mit dem neuen Schlüssel:
+            # Nehme den Wert aus percent_row, falls vorhanden, und konvertiere ihn in einen Float:
+            if 'avg_weighting_factor' in percent_row:
+                try:
+                    # Ersetze ggf. Komma durch Punkt und wandle um
+                    aw_val = float(str(percent_row['avg_weighting_factor']).replace(",", "."))
+                except Exception:
+                    aw_val = 0.0
+                new_row['ave_weighting_factor'] = aw_val
+            else:
+                new_row['ave_weighting_factor'] = 0.0
+
+            # (e) ave_weighted berechnen – hier muss der neue Schlüssel verwendet werden:
             try:
-                new_row["ave_weighted"] = new_row["pr_value"] * new_row["avg_weighting_factor"]
-            except:
+                # Stelle sicher, dass auch pr_value ein numerischer Wert ist
+                pr_val = float(new_row["pr_value"]) if new_row["pr_value"] is not None else 0.0
+                new_row["ave_weighted"] = pr_val * (new_row["ave_weighting_factor"]/100)
+            except Exception:
                 new_row["ave_weighted"] = 0.0
+
+
 
             # (f) hr_basis ggf. auf "HR" setzen
             new_row["hr_basis"] = "HR"
@@ -1310,10 +1321,51 @@ def extrapolate_nonvideo(n_clicks, mm_dims2, ea_dims2):
     return msg
 
 
+#----------export non-video---------------------
+
+@app.callback(
+    Output("download1", "data"),
+    Input("export-nonvideo-button", "n_clicks"),
+    prevent_initial_call=True
+)
+def export_nonvideo_to_excel(n_clicks):
+    if not n_clicks:
+        return None
+    db_path = "data.db"
+    conn = sqlite3.connect(db_path)
+    # Lese beide Tabellen aus der Datenbank:
+    df_non_video = pd.read_sql("SELECT * FROM non_video", conn)
+    df_hr_non_video = pd.read_sql("SELECT * FROM hr_non_bewegt", conn)
+    conn.close()
+    
+    # Konkatenieren: Zeilen aus non_video und hr_non_video untereinander
+    df_export = pd.concat([df_non_video, df_hr_non_video], ignore_index=True)
+    
+    output = BytesIO()
+    # ExcelWriter verwenden – hier wird das Arbeitsblatt explizit "data" genannt.
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_export.to_excel(writer, index=False, sheet_name="data")
+        workbook = writer.book
+        worksheet = writer.sheets["data"]
+        
+        # Beispiel: Formatierung pro Spalte (anpassen, falls erforderlich)
+        for i, col in enumerate(df_export.columns):
+            col_letter = get_column_letter(i+1)
+            # Beispiel: Zahlenformat für bestimmte Spalten
+            if col.lower() in ["pr_value", "ave_100", "ave_weighted"]:
+                for cell in worksheet[col_letter][1:]:
+                    cell.number_format = '#,##0'
+            elif col.lower() in ["broadcasting_time", "visibility", "apt", "start_time_program", "end_time_program", "start_time_item"]:
+                for cell in worksheet[col_letter][1:]:
+                    cell.number_format = 'h:mm:ss'
+    output.seek(0)
+    return dcc.send_bytes(output.getvalue(), "nonvideo_report.xlsx")
 
 
 
 # ---------------- Main ----------------
 
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run(debug=True)
+
+
