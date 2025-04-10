@@ -8,6 +8,8 @@ import math
 import random 
 import numpy as np
 from io import BytesIO
+import plotly.express as px
+from dash.dash_table.Format import Format, Group
 import openpyxl
 from openpyxl.utils import get_column_letter
 
@@ -498,11 +500,91 @@ app.layout = html.Div([
                         selected_style={'backgroundColor': '#e74c3c', 'color': 'white'},
                         children=[
                             html.H1("Nicht-Bewegtbild – Ergebnisse"),
+                            html.Div([
+                                html.Div([
+                                    html.H3("MM-Dimensionen Ergebnisse"),
+                                    dcc.Dropdown(
+                                        id='mm-dimensions-results',
+                                        options=[
+                                            {'label': 'media', 'value': 'media'},
+                                            {'label': 'region', 'value': 'region'},
+                                            {'label': 'country', 'value': 'country'},
+                                            {'label': 'broadcaster', 'value': 'broadcaster'},
+                                            {'label': 'channel', 'value': 'channel'},
+                                            {'label': 'genre', 'value': 'genre'},
+                                            {'label': 'sports', 'value': 'sports'},
+                                            {'label': 'competition', 'value': 'competition'},
+                                            {'label': 'season', 'value': 'season'},
+                                            {'label': 'event', 'value': 'event'},
+                                            {'label': 'venue', 'value': 'venue'},
+                                            {'label': 'event_country', 'value': 'event_country'},
+                                            {'label': 'j1', 'value': 'j1'},
+                                            {'label': 'j2', 'value': 'j2'},
+                                            {'label': 'j3', 'value': 'j3'},
+                                            {'label': 'j4', 'value': 'j4'},
+                                            {'label': 'j5', 'value': 'j5'},
+                                            {'label': 'hr1', 'value': 'hr1'},
+                                            {'label': 'hr2', 'value': 'hr2'},
+                                            {'label': 'hr3', 'value': 'hr3'},
+                                            {'label': 'hr4', 'value': 'hr4'},
+                                            {'label': 'hr5', 'value': 'hr5'}
+                                        ],
+                                        multi=True,
+                                        placeholder="Wählen Sie MM-Dimensionen für Ergebnisse..."
+                                    )
+                                ], style={'width': '48%', 'display': 'inline-block'}),
+                                html.Div([
+                                    html.H3("EA-Dimensionen Ergebnisse"),
+                                    dcc.Dropdown(
+                                        id='ea-dimensions-results',
+                                        options=[
+                                            {'label': 'company', 'value': 'company'},
+                                            {'label': 'sponsor', 'value': 'sponsor'},
+                                            {'label': 'tool', 'value': 'tool'},
+                                            {'label': 'personal_sponsorship', 'value': 'personal_sponsorship'},
+                                            {'label': 'tool_location', 'value': 'tool_location'},
+                                        ],
+                                        multi=True,
+                                        placeholder="Wählen Sie EA-Dimensionen für Ergebnisse..."
+                                    )
+                                ], style={'width': '48%', 'display': 'inline-block'})
+                            ], style={'margin-bottom': '20px'}),
+                            # Neuer hr_basis-Filter
+                            html.Div([
+                                html.H3("Filter hr_basis"),
+                                dcc.Dropdown(
+                                    id='hr-basis-filter',
+                                    options=[
+                                        {'label': 'Alle', 'value': 'all'},
+                                        {'label': 'Basis', 'value': 'Basis'},
+                                        {'label': 'HR', 'value': 'HR'}
+                                    ],
+                                    value='all',
+                                    clearable=False
+                                )
+                            ], style={'width': '30%', 'margin-bottom': '20px'}),
+                            html.Button("Berechne Ergebnisse Non-Video", id="calculate-results-nonvideo", style={'backgroundColor': 'darkblue', 'color': 'white'}),
+                            html.Div(id="nonvideo-results-status", style={'margin-top': '10px'}),
+                            dash_table.DataTable(
+                                id="nonvideo-results-table",
+                                columns=[],  # Wird im Callback dynamisch gesetzt
+                                data=[],     # Wird im Callback dynamisch gesetzt
+                                editable=False,
+                                filter_action="native",
+                                sort_action="native",
+                                sort_mode="multi",
+                                style_table={'overflowX': 'auto'},
+                                style_cell={'textAlign': 'left'}
+                            ),
+                            # Kreisdiagramm für die Verteilung von ave_weighted nach hr_basis
+                            dcc.Graph(id="nonvideo-pie"),
+                            html.Br(),
                             html.Button("Export Nicht-Bewegtbild", id="export-nonvideo-button", style={'backgroundColor': 'darkgreen', 'color': 'white', 'margin-left': '10px'}),
                             dcc.Download(id="download1"),
-                            html.Div("Platzhalter – hier folgen die Ergebnisse für Nicht-Bewegtbild.")
+                            html.Div("Platzhalter – hier folgen weitere Visualisierungen.")
                         ]
-                    ),
+                    )
+,
                     dcc.Tab(
                         label="Basecheck",
                         value="basecheck_nbv",
@@ -1400,6 +1482,82 @@ def export_nonvideo_to_excel(n_clicks):
                     cell.number_format = 'h:mm:ss'
     output.seek(0)
     return dcc.send_bytes(output.getvalue(), "nonvideo_report.xlsx")
+
+#------Ergebnisse Non-Video----------------
+
+import plotly.express as px
+from dash.dash_table.Format import Format, Group
+
+import plotly.express as px
+from dash.dash_table.Format import Format, Group
+
+@app.callback(
+    [Output("nonvideo-results-status", "children"),
+     Output("nonvideo-results-table", "data"),
+     Output("nonvideo-results-table", "columns"),
+     Output("nonvideo-pie", "figure")],
+    [Input("calculate-results-nonvideo", "n_clicks")],
+    [State("mm-dimensions-results", "value"),
+     State("ea-dimensions-results", "value"),
+     State("hr-basis-filter", "value")]
+)
+def calculate_nonvideo_results(n_clicks, mm_dims_res, ea_dims_res, hr_basis_filter):
+    if not n_clicks:
+        return "", [], [], {}
+    
+    # Laden der Daten
+    db_path = "data.db"
+    conn = sqlite3.connect(db_path)
+    df_non_video = pd.read_sql("SELECT * FROM non_video", conn)
+    df_hr_non_video = pd.read_sql("SELECT * FROM hr_non_bewegt", conn)
+    conn.close()
+    df_combined = pd.concat([df_non_video, df_hr_non_video], ignore_index=True)
+    
+    # Filter nach hr_basis, falls nicht "all" gewählt
+    if hr_basis_filter != "all":
+        df_combined = df_combined[df_combined["hr_basis"] == hr_basis_filter]
+    
+    # Bestimme die Gruppierungsfelder basierend auf der unabhängigen Dimensionsauswahl
+    group_by_cols = []
+    if mm_dims_res:
+        group_by_cols.extend(mm_dims_res)
+    if ea_dims_res:
+        group_by_cols.extend(ea_dims_res)
+    if not group_by_cols:
+        return "Bitte wählen Sie mindestens eine Dimension für die Ergebnisberechnung aus.", [], {}, {}
+    
+    # Aggregation: Summen der Kennzahlen
+    agg_df = df_combined.groupby(group_by_cols, as_index=False).agg({
+        "mentions": "sum",
+        "ave_100": "sum",
+        "ave_weighted": "sum"
+    })
+    
+    # Runde die aggregierten Werte und belasse sie als numerische Werte:
+    agg_df["Summe mentions"] = agg_df["mentions"].round(0)
+    agg_df["Summe ave_100"] = agg_df["ave_100"].round(0)
+    agg_df["Summe ave_weighted"] = agg_df["ave_weighted"].round(0)
+    agg_df = agg_df.drop(columns=["mentions", "ave_100", "ave_weighted"])
+    
+    # Definiere die Spalten: Gruppierungsfelder als Text und Kennzahlen als numerisch (mit Tausendertrennzeichen)
+    text_columns = [{"name": col, "id": col, "type": "text"} for col in group_by_cols]
+    numeric_columns = [
+        {"name": "Summe mentions", "id": "Summe mentions", "type": "numeric", "format": Format().group(Group.yes)},
+        {"name": "Summe ave_100", "id": "Summe ave_100", "type": "numeric", "format": Format().group(Group.yes)},
+        {"name": "Summe ave_weighted", "id": "Summe ave_weighted", "type": "numeric", "format": Format().group(Group.yes)}
+    ]
+    columns = text_columns + numeric_columns
+    data = agg_df.to_dict("records")
+    
+    # Kreisdiagramm erstellen: Gruppiere die kombinierten Daten nach hr_basis, summiere ave_weighted
+    pie_df = df_combined.groupby("hr_basis", as_index=False).agg({"ave_weighted": "sum"})
+    fig = px.pie(pie_df, names="hr_basis", values="ave_weighted",
+                 title="Verteilung von Summe ave_weighted nach hr_basis")
+    
+    status_msg = f"Ergebnisse berechnet: {len(agg_df)} Gruppen gefunden."
+    return status_msg, data, columns, fig
+
+
 
 
 
