@@ -1054,15 +1054,19 @@ def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
     # Filtere nur Zeilen mit hr_basis = "Basis"
     df_basis = df_nonvideo[df_nonvideo['hr_basis'] == 'Basis']
     overall_bid_count = df_basis['bid'].nunique()
-    
-    # Kennzahl 1: avg_weighting_factor – Durchschnitt der Spalte ave_weighting_factor (nur Basis)
-    overall_avg_weighting = df_basis["ave_weighting_factor"].mean() * 100
+
+    # Hier vorher wurde bisher der Durchschnitt von ave_weighting_factor genommen.
+    # Jetzt berechnen wir stattdessen den Durchschnitt des Verhältnisses aus ave_weighted und ave_100:
+    df_basis["weight_ratio"] = df_basis.apply(lambda r: r["ave_weighted"] / r["ave_100"] if r["ave_100"] > 0 else 0, axis=1)
+    overall_avg_weighting = df_basis["weight_ratio"].mean() * 100
+
     if ea_dims:
-        avg_weighting_df = df_basis.groupby(ea_dims, as_index=False)["ave_weighting_factor"].mean()
-        avg_weighting_df["avg_weighting_factor"] = avg_weighting_df["ave_weighting_factor"] * 100
-        avg_weighting_df.drop(columns=["ave_weighting_factor"], inplace=True)
+        avg_weighting_df = df_basis.groupby(ea_dims, as_index=False)["weight_ratio"].mean()
+        avg_weighting_df.rename(columns={"weight_ratio": "avg_weighting_factor"}, inplace=True)
+        avg_weighting_df["avg_weighting_factor"] = avg_weighting_df["avg_weighting_factor"] * 100
     else:
         avg_weighting_df = None
+
 
     # Gruppierung 1: bid_mm_kombo – gruppiere nach mm-dimensions2 (Basis)
     if mm_dims:
@@ -1151,6 +1155,75 @@ def calculate_nonvideo_percentages(n_clicks, mm_dims, ea_dims):
     status_msg = f"Basecheck Non-Video: {len(df_result)} Gruppen gefunden. (Distinct bid Gesamt: {overall_bid_count:,})"
     return status_msg, data, columns
 
+def select_candidate_rows(df_candidates, n_needed, country_field="country", pr_value_field="pr_value", alpha=0.7):
+    """
+    Wählt n_needed Zeilen aus df_candidates aus, wobei:
+      - Die Auswahl proportional zur Anzahl der Zeilen pro country erfolgt.
+      - Innerhalb jeder country-Gruppe erfolgt eine gewichtete Auswahl basierend auf pr_value.
+        Dabei wird das Gewicht als: weight = alpha * (pr_value_normalized) + (1 - alpha) berechnet.
+        So werden hohe pr_value berücksichtigt, aber nicht ausschließlich.
+    
+    Parameter:
+      - df_candidates: DataFrame mit Kandidatenzeilen.
+      - n_needed: Gesamtzahl der benötigten Zeilen.
+      - country_field: Feldname für die Länderinformation (Standard: "country").
+      - pr_value_field: Feldname für den KPI pr_value (Standard: "pr_value").
+      - alpha: Gewichtungsfaktor (zwischen 0 und 1) für pr_value.
+    
+    Rückgabe:
+      - Liste von Dictionaries (jede Zeile repräsentiert einen Kandidaten).
+    """
+    import uuid
+    import random
+    
+    total_candidates = len(df_candidates)
+    if total_candidates == 0:
+        return []
+    
+    # Gruppiere nach dem Länderkriterium
+    groups = df_candidates.groupby(country_field)
+    selected = []
+    
+    # Proportionale Zuteilung: Aus jeder Gruppe n_country Zeilen auswählen
+    for country, group in groups:
+        group_size = len(group)
+        # Berechne die Anzahl der Zeilen, die aus dieser Gruppe ausgewählt werden sollen
+        n_country = round(n_needed * group_size / total_candidates)
+        # Wenn die Gruppe nicht leer ist, mindestens 1 auswählen
+        if n_country == 0 and group_size > 0:
+            n_country = 1
+        
+        # Berechne Gewichte: Normiere pr_value auf den Maximalwert innerhalb der Gruppe
+        pr_values = group[pr_value_field].fillna(0)
+        max_pr = pr_values.max()
+        if max_pr > 0:
+            normalized = pr_values / max_pr
+        else:
+            normalized = pr_values
+        # Gewicht: hohes pr_value soll bevorzugt werden, aber mit einem konstanten Anteil
+        weights = alpha * normalized + (1 - alpha)
+        
+        # Falls genug Zeilen in der Gruppe vorhanden sind, ohne Replacement
+        if group_size >= n_country:
+            sampled_group = group.sample(n=n_country, weights=weights, replace=False)
+        else:
+            sampled_group = group.sample(n=n_country, weights=weights, replace=True)
+        selected.extend(sampled_group.to_dict(orient="records"))
+    
+    # Falls insgesamt weniger als n_needed ausgewählt wurden, ergänze zufällig aus dem gesamten DataFrame
+    while len(selected) < n_needed:
+        extra_row = df_candidates.sample(n=1, replace=False).iloc[0].to_dict()
+        extra_row["bid"] = str(uuid.uuid4())
+        selected.append(extra_row)
+    
+    # Falls zu viele Zeilen ausgewählt wurden, zufälliges Trim auf genau n_needed
+    if len(selected) > n_needed:
+        selected = random.sample(selected, n_needed)
+    
+    return selected
+
+
+
 #--------------non vido HR---------------------------
 
 @app.callback(
@@ -1216,66 +1289,35 @@ def extrapolate_nonvideo(n_clicks, mm_dims2, ea_dims2):
         if df_candidates.empty:
             continue
 
-        # 6) Zufällige Auswahl (sample_size = min(ids_for_hr, anzahl_kandidaten)
-        sample_size = ids_for_hr  # Nimm exakt die Anzahl aus ids_for_hr
-        df_sampled = df_candidates.sample(
-            n=sample_size,
-            replace=True,       # <--- Wichtig: Mit Replacement
-            random_state=None
-        )
+        # Nutze die ausgelagerte Funktion zur Auswahl der Kandidaten
+        selected_rows = select_candidate_rows(df_candidates, ids_for_hr, country_field="country", pr_value_field="pr_value", alpha=0.7)
 
-        # 6) Zufällige Auswahl: Zuerst alle vorhandenen Kandidaten ohne Replacement
-        sampled = df_candidates.sample(n=len(df_candidates), replace=False)
-        selected_rows = sampled.to_dict(orient="records")
 
-        # Wenn die vorhandenen Kandidaten weniger sind als ids_for_hr,
-        # erweitern wir die Liste, indem wir zusätzliche Zeilen generieren.
-        n_needed = ids_for_hr
-        import uuid
-        while len(selected_rows) < n_needed:
-            # Wähle zufällig eine Kandidatenzeile
-            cand_row = df_candidates.sample(n=1, replace=False).iloc[0].to_dict()
-            # Vergib einen neuen, eindeutigen BID
-            cand_row["bid"] = str(uuid.uuid4())
-            selected_rows.append(cand_row)
 
 
         # 7) Für jede zufällig ausgewählte Zeile: Kopie erstellen und Felder überschreiben
-        for _, cand_row in df_sampled.iterrows():
-            new_row = cand_row.copy()
+        for cand in selected_rows:
+            new_row = cand.copy()
 
-            # (a) EA-Dimensionen überschreiben (z.B. sponsor, tool, personal_sponsorship, etc.)
+            # (a) Update EA dimensions from percent_row
             if ea_dims2:
                 for ea_dim in ea_dims2:
                     if ea_dim in percent_row:
                         new_row[ea_dim] = percent_row[ea_dim]
 
-            # (b) mentions überschreiben
-            # Achtung auf Datentyp (String -> int). Falls "avg_mentions" in percent_non_video so heißt:
+            # (b) Overwrite mentions (ensure numeric conversion)
             if "avg_mentions" in df_percent.columns:
                 try:
                     new_row["mentions"] = int(float(str(percent_row["avg_mentions"]).replace(",", ".")))
                 except:
                     new_row["mentions"] = 1  # minimal 1
 
-            new_row = cand_row.copy()  # oder aus deiner sample-Auswahl
-            # (c) avg_weighting_factor übernehmen
-            # 1. ave_100 eintragen: Wert von pr_value übernehmen
+            # (c) Set ave_100 from pr_value
             new_row['ave_100'] = new_row.get('pr_value')
 
-
-
-            # Nehme den Wert aus percent_row, falls vorhanden:
-            if 'avg_weighting_factor' in percent_row:
-                new_row['ave_weighting_factor'] = percent_row['avg_weighting_factor']
-            else:
-                new_row['ave_weighting_factor'] = None
-
-            # (e) ave_weighted berechnen, hier mit dem neuen Schlüssel:
-            # Nehme den Wert aus percent_row, falls vorhanden, und konvertiere ihn in einen Float:
+            # (d) Replace avg_weighting_factor with ave_weighting_factor from percent_row
             if 'avg_weighting_factor' in percent_row:
                 try:
-                    # Ersetze ggf. Komma durch Punkt und wandle um
                     aw_val = float(str(percent_row['avg_weighting_factor']).replace(",", "."))
                 except Exception:
                     aw_val = 0.0
@@ -1283,21 +1325,19 @@ def extrapolate_nonvideo(n_clicks, mm_dims2, ea_dims2):
             else:
                 new_row['ave_weighting_factor'] = 0.0
 
-            # (e) ave_weighted berechnen – hier muss der neue Schlüssel verwendet werden:
+            # (e) Calculate ave_weighted using the new key (ensure pr_value is numeric)
             try:
-                # Stelle sicher, dass auch pr_value ein numerischer Wert ist
                 pr_val = float(new_row["pr_value"]) if new_row["pr_value"] is not None else 0.0
-                new_row["ave_weighted"] = pr_val * (new_row["ave_weighting_factor"]/100)
+                new_row["ave_weighted"] = pr_val * (new_row["ave_weighting_factor"] / 100)
             except Exception:
                 new_row["ave_weighted"] = 0.0
 
-
-
-            # (f) hr_basis ggf. auf "HR" setzen
+            # (f) Ensure hr_basis is set to "HR"
             new_row["hr_basis"] = "HR"
 
-            # Füge die neue Zeile der Ergebnisliste hinzu
+            # Append the modified new_row only once
             result_rows.append(new_row)
+
 
     # 8) Falls keine neuen Zeilen erstellt wurden -> Meldung
     if not result_rows:
