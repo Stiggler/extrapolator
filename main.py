@@ -899,7 +899,7 @@ def combined_results(n_clicks1, n_clicks2, mm_dims, ea_dims):
     if triggered_id == "calculate-results":
         # Logik zum Erstellen der Tabelle "video_final" (Union von video und hr_bewegt)
         conn = sqlite3.connect(db_path)
-        df_video = pd.read_sql("SELECT * FROM video_final", conn)
+        df_video = pd.read_sql("SELECT * FROM video", conn)
         df_hr = pd.read_sql("SELECT * FROM hr_bewegt", conn)
         conn.close()
         
@@ -1565,5 +1565,3 @@ def calculate_nonvideo_results(n_clicks, mm_dims_res, ea_dims_res, hr_basis_filt
 
 if __name__ == '__main__':
     app.run(debug=True)
-
-
