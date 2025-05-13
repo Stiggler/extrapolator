@@ -1,0 +1,164 @@
+# Projektstruktur für den IRIS-Extrapolator
+
+## app.py (Hauptdatei)
+from dash import Dash
+from layout import create_layout
+from callbacks import register_callbacks
+
+app = Dash(__name__, title="IRIS-Extrapolator", suppress_callback_exceptions=True)
+app.layout = create_layout()
+register_callbacks(app)
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+
+# layout.py
+from dash import dcc, html
+from components.import_section import import_tab
+from components.video_section import video_tab
+from components.nonvideo_section import nonvideo_tab
+
+def create_layout():
+    return html.Div([
+        dcc.Tabs([
+            import_tab(),
+            video_tab(),
+            nonvideo_tab()
+        ])
+    ])
+
+
+# callbacks/__init__.py
+from .import_callbacks import register_import_callbacks
+from .video_callbacks import register_video_callbacks
+from .nonvideo_callbacks import register_nonvideo_callbacks
+
+def register_callbacks(app):
+    register_import_callbacks(app)
+    register_video_callbacks(app)
+    register_nonvideo_callbacks(app)
+
+
+# components/import_section.py
+from dash import dcc, html, dash_table
+
+def import_tab():
+    return dcc.Tab(label="Import", children=[
+        html.H1("Excel Daten Import Tool"),
+        html.Div([
+            html.Label("Import-Modus:"),
+            dcc.RadioItems(
+                id="mode-radio",
+                options=[
+                    {"label": "Append", "value": "append"},
+                    {"label": "Replace", "value": "replace"}
+                ],
+                value="replace",
+                labelStyle={'display': 'inline-block', 'margin-right': '10px'}
+            )
+        ], style={'margin-bottom': '10px'}),
+        dcc.Upload(
+            id="upload-data",
+            children=html.Div(["Drag & Drop oder ", html.A("Dateien auswählen")]),
+            multiple=True,
+            accept=".xlsx",
+            style={
+                'width': '100%',
+                'height': '60px',
+                'lineHeight': '60px',
+                'borderWidth': '1px',
+                'borderStyle': 'dashed',
+                'borderRadius': '5px',
+                'textAlign': 'center',
+                'color': 'white',
+                'background': '#73b8e6',
+                'margin-bottom': '20px'
+            }
+        ),
+        html.Div(id="status", style={'margin-bottom': '20px'}),
+        html.H2("Importübersicht"),
+        html.Div([
+            html.Div([
+                html.H3("Import Bewegtbild"),
+                dash_table.DataTable(
+                    id="aggregated-table-1",
+                    columns=[],
+                    data=[],
+                    style_table={'overflowX': 'auto'},
+                    style_cell={'textAlign': 'left'},
+                    style_header={
+                        'backgroundColor': '#73b8e6',
+                        'color': 'white'
+                    }
+                )
+            ], style={'width': '33%', 'display': 'inline-block', 'vertical-align': 'top', 'margin-right': '20px'}),
+            html.Div([
+                html.H3("Import Nicht-Bewegtbild"),
+                dash_table.DataTable(
+                    id="aggregated-table-2",
+                    columns=[],
+                    data=[],
+                    style_table={'overflowX': 'auto'},
+                    style_cell={'textAlign': 'left'},
+                    style_header={
+                        'backgroundColor': '#73b8e6',
+                        'color': 'white'
+                    }
+                )
+            ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top'})
+        ])
+    ])
+
+
+# components/video_section.py
+from dash import dcc, html
+
+def video_tab():
+    return dcc.Tab(label="Bewegtbild", children=[
+        dcc.Tabs([
+            dcc.Tab(label="Hochrechnung", children=[]),
+            dcc.Tab(label="Ergebnisse", children=[]),
+            dcc.Tab(label="Basecheck", children=[])
+        ])
+    ])
+
+
+# components/nonvideo_section.py
+from dash import dcc, html
+
+def nonvideo_tab():
+    return dcc.Tab(label="Nicht-Bewegtbild", children=[
+        dcc.Tabs([
+            dcc.Tab(label="Hochrechnung", children=[]),
+            dcc.Tab(label="Ergebnisse", children=[]),
+            dcc.Tab(label="Basecheck", children=[])
+        ])
+    ])
+
+
+# callbacks/import_callbacks.py
+def register_import_callbacks(app):
+    @app.callback(
+        [...],
+        [...]
+    )
+    def update_on_upload(...):
+        pass
+
+
+# callbacks/video_callbacks.py
+def register_video_callbacks(app):
+    pass  # Alle relevanten Video-Callbacks kommen hier rein
+
+
+# callbacks/nonvideo_callbacks.py
+def register_nonvideo_callbacks(app):
+    pass  # Alle relevanten Non-Video-Callbacks kommen hier rein
+
+
+# Zusätzlich:
+# - helpers.py (z.B. für convert_timedelta_to_decimal, hms_to_decimal, etc.)
+# - db.py (DB-Zugriff wie update_database, get_aggregated_data, ...)
+# - export.py (Excel-Export)
+# - ggf. assets/styles.css für Design
