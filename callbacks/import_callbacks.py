@@ -33,43 +33,59 @@ def register_import_callbacks(app):
                 first_file = False
                 status_messages.append(f"Datei {filename} importiert.")
 
-            # Tabelle video
-            db_path = "data.db"
-            conn = sqlite3.connect(db_path)
-            df_video = pd.read_sql("""
-                SELECT * FROM data
-                WHERE (media = 'TV/OTT' OR (media = 'Social Media' AND post_type IN ('Video')))
-            """, conn)
-            conn.close()
+                # Tabelle video
+                db_path = "data.db"
+                conn = sqlite3.connect(db_path)
+                df_video = pd.read_sql("""
+                    SELECT * FROM data
+                    WHERE (media = 'TV/OTT' OR (media = 'Social Media' AND post_type IN ('Video')))
+                """, conn)
+                conn.close()
 
-            conn = sqlite3.connect(db_path)
-            df_video.to_sql("video", conn, if_exists="replace", index=False)
-            conn.close()
-            status_messages.append(f"Tabelle 'video' erstellt: {len(df_video)} Zeilen gespeichert.")
+                conn = sqlite3.connect(db_path)
+                df_video.to_sql("video", conn, if_exists="replace", index=False)
+                conn.close()
+                status_messages.append(f"Tabelle 'video' erstellt: {len(df_video)} Zeilen gespeichert.")
 
-            # Tabelle non_video
-            conn = sqlite3.connect(db_path)
-            df_non_video = pd.read_sql("""
-                SELECT * FROM data
-                WHERE media IN ('Print', 'Online', 'Social Media')
-                  AND (post_type IS NULL OR post_type = '' OR post_type NOT IN ('Video'))
-            """, conn)
-            conn.close()
+                # Tabelle non_video
+                conn = sqlite3.connect(db_path)
+                df_non_video = pd.read_sql("""
+                    SELECT * FROM data
+                    WHERE media IN ('Print', 'Online', 'Social Media')
+                    AND (post_type IS NULL OR post_type = '' OR post_type NOT IN ('Video'))
+                """, conn)
+                conn.close()
 
-            conn = sqlite3.connect(db_path)
-            df_non_video.to_sql("non_video", conn, if_exists="replace", index=False)
-            conn.close()
-            status_messages.append(f"Tabelle 'non_video' erstellt: {len(df_non_video)} Zeilen gespeichert.")
+                conn = sqlite3.connect(db_path)
+                df_non_video.to_sql("non_video", conn, if_exists="replace", index=False)
+                conn.close()
+                status_messages.append(f"Tabelle 'non_video' erstellt: {len(df_non_video)} Zeilen gespeichert.")
 
-            # Aggregation für UI
-            df_agg1 = get_aggregated_data()
-            data1 = df_agg1.to_dict("records") if not df_agg1.empty else []
-            columns1 = [{"name": col, "id": col} for col in df_agg1.columns] if not df_agg1.empty else []
+                # ⚠️ Prüfung auf fehlende broadcasting_time
+                conn = sqlite3.connect("data.db")
+                df_check = pd.read_sql("SELECT * FROM data", conn)
+                conn.close()
 
-            df_agg2 = get_aggregated_data_opposite()
-            data2 = df_agg2.to_dict("records") if not df_agg2.empty else []
-            columns2 = [{"name": col, "id": col} for col in df_agg2.columns] if not df_agg2.empty else []
+                df_invalid_bt = df_check[
+                    ((df_check["media"] == "TV/OTT") |
+                    ((df_check["media"] == "Social Media") & (df_check["post_type"].str.lower() == "video"))) &
+                    (df_check["broadcasting_time"].isnull())
+                ]
 
-            return html.Div([html.Div(msg) for msg in status_messages]), data1, columns1, data2, columns2
+                if not df_invalid_bt.empty:
+                    status_messages.append(f"⚠️ {len(df_invalid_bt)} Zeilen mit fehlender broadcasting_time (TV/OTT oder Video auf Social Media).")
+
+                # Aggregation für UI
+                df_agg1 = get_aggregated_data()
+                data1 = df_agg1.to_dict("records") if not df_agg1.empty else []
+                columns1 = [{"name": col, "id": col} for col in df_agg1.columns] if not df_agg1.empty else []
+
+                df_agg2 = get_aggregated_data_opposite()
+                data2 = df_agg2.to_dict("records") if not df_agg2.empty else []
+                columns2 = [{"name": col, "id": col} for col in df_agg2.columns] if not df_agg2.empty else []
+
+                return html.Div([html.Div(msg) for msg in status_messages]), data1, columns1, data2, columns2
+
+        
 
         return "", [], [], [], []
