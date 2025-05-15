@@ -1,4 +1,4 @@
-from dash import Output, Input, State, ctx, dash_table
+from dash import Output, Input, State, dcc, callback_context, ctx, dash_table
 import dash
 import pandas as pd
 import sqlite3
@@ -12,7 +12,8 @@ def register_video_callbacks(app):
         [
             Output("percentages-status", "children"),
             Output("percentages-table", "data"),
-            Output("percentages-table", "columns")
+            Output("percentages-table", "columns"),
+            Output("field-selector", "options")
         ],
         Input("calculate-percentages", "n_clicks"),
         State("mm-dimensions", "value"),
@@ -20,7 +21,7 @@ def register_video_callbacks(app):
     )
     def calculate_percentages(n_clicks, mm_dims, ea_dims):
         if not n_clicks:
-            return "", [], []
+            return "", [], [], []
         group_by_cols = (mm_dims or []) + (ea_dims or [])
         if not group_by_cols:
             return "Bitte wählen Sie mindestens eine Dimension aus.", [], []
@@ -51,7 +52,8 @@ def register_video_callbacks(app):
         df_raw = pd.read_sql(query, conn)
         conn.close()
         if df_raw.empty:
-            return "Keine Daten gefunden.", [], []
+            return "Keine Daten gefunden.", [], [], []
+
 
         df = df_raw.copy()
         df['sum_mentions'] = df['sum_mentions'].fillna(0).astype(int)
@@ -79,7 +81,11 @@ def register_video_callbacks(app):
         final_df.to_sql("percent", conn, if_exists="replace", index=False)
         conn.close()
 
-        return "Berechnung erfolgreich.", data, columns
+        field_options = [{"label": col["name"], "value": col["id"]} for col in columns]
+        return "Berechnung erfolgreich.", data, columns, field_options
+
+
+
 
     @app.callback(
         Output("update-percentages-status", "children"),
@@ -287,3 +293,107 @@ def register_video_callbacks(app):
         return dcc.send_bytes(output.getvalue(), "video_final.xlsx")
 
 
+
+    @app.callback(
+        Output("percentages-table", "data", allow_duplicate=True),
+        [
+            Input("add-percentages-row", "n_clicks"),
+            Input("duplicate-percentages-rows", "n_clicks")
+        ],
+        State("percentages-table", "data"),
+        State("percentages-table", "columns"),
+        State("percentages-table", "selected_rows"),
+        prevent_initial_call=True
+    )
+    def modify_percentages_table(n_add, n_duplicate, data, columns, selected_rows):
+        from dash import callback_context
+        triggered = callback_context.triggered_id
+        if data is None:
+            data = []
+
+        if triggered == "add-percentages-row":
+            new_row = {col["id"]: "" for col in columns}
+            data.append(new_row)
+        elif triggered == "duplicate-percentages-rows" and selected_rows:
+            duplicated = [data[i].copy() for i in selected_rows]
+            data += duplicated
+
+        return data
+
+
+    @app.callback(
+        Output("percentages-table", "data", allow_duplicate=True),
+        Input("apply-field-value", "n_clicks"),
+        State("percentages-table", "data"),
+        State("percentages-table", "selected_rows"),
+        State("field-selector", "value"),
+        State("field-value", "value"),
+        prevent_initial_call=True
+    )
+    def apply_field_value(n_clicks, data, selected_rows, field, value):
+        if not selected_rows or not field:
+            return data
+
+        for i in selected_rows:
+            data[i][field] = value
+        return data
+
+
+    @app.callback(
+        [
+            Output("basecheck-status", "children"),
+            Output("basecheck-table", "data"),
+            Output("basecheck-table", "columns")
+        ],
+        Input("calculate-basecheck", "n_clicks"),
+        State("mm-dimensions-basecheck", "value"),
+        prevent_initial_call=True
+    )
+    def calculate_basecheck(n_clicks, dimensions):
+        if not dimensions:
+            return "Bitte wählen Sie mindestens eine Dimension aus.", [], []
+
+        conn = sqlite3.connect("data.db")
+        df = pd.read_sql("SELECT * FROM video", conn)
+        conn.close()
+
+        if df.empty or "hr_basis" not in df.columns:
+            return "Keine gültigen Daten in 'video' gefunden.", [], []
+
+        # Gruppierung nach Dimensionen + hr_basis
+        grouped = df.groupby(dimensions + ["hr_basis"], as_index=False).agg({
+            "bid": pd.Series.nunique,
+            "visibility": "sum",
+            "broadcasting_time": "sum"
+        })
+
+        # Pivotieren
+        pivot_bid = grouped.pivot_table(index=dimensions, columns="hr_basis", values="bid", fill_value=0).add_prefix("distinct_bid_").reset_index()
+        pivot_vis = grouped.pivot_table(index=dimensions, columns="hr_basis", values="visibility", fill_value=0).add_prefix("visibility_").reset_index()
+        pivot_bt  = grouped.pivot_table(index=dimensions, columns="hr_basis", values="broadcasting_time", fill_value=0).add_prefix("broadcasting_time_").reset_index()
+
+        # Zusammenführen
+        df_final = pivot_bid.merge(pivot_vis, on=dimensions).merge(pivot_bt, on=dimensions)
+
+        # Zeitfelder umwandeln
+        for col in df_final.columns:
+            if col.startswith("visibility_") or col.startswith("broadcasting_time_"):
+                df_final[col] = df_final[col].apply(decimal_to_hms)
+
+        columns = []
+        for col in df_final.columns:
+            if col.startswith("distinct_bid_"):
+                basis = col.replace("distinct_bid_", "")
+                columns.append({"name": ["distinct_bid", basis], "id": col})
+            elif col.startswith("visibility_"):
+                basis = col.replace("visibility_", "")
+                columns.append({"name": ["visibility", basis], "id": col})
+            elif col.startswith("broadcasting_time_"):
+                basis = col.replace("broadcasting_time_", "")
+                columns.append({"name": ["broadcasting_time", basis], "id": col})
+            else:
+                columns.append({"name": [col, ""], "id": col})
+
+        data = df_final.to_dict("records")
+
+        return f"{len(df_final)} Gruppen gefunden.", data, columns

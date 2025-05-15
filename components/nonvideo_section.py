@@ -91,7 +91,32 @@ def nonvideo_tab():
             ]),
             dcc.Tab(label="Basecheck", value="basecheck_nbv", children=[
                 html.H1("Nicht-Bewegtbild – Basecheck"),
-                html.Div("Platzhalter – spätere Erweiterung möglich.")
+                html.Div([
+                    html.Div([
+                        html.H3("MM-Dimensionen"),
+                        dcc.Dropdown(
+                            id="mm-dimensions-basecheck-nbv",
+                            multi=True,
+                            placeholder="Wählen Sie MM-Dimensionen...",
+                            options=[{'label': col, 'value': col} for col in [
+                                'media', 'region', 'country', 'broadcaster', 'channel', 'genre',
+                                'sports', 'competition', 'season', 'event', 'venue', 'event_country',
+                                'post_type', 'owned_channel', 'j1', 'j2', 'j3', 'j4', 'j5',
+                                'hr1', 'hr2', 'hr3', 'hr4', 'hr5']]
+                        )
+                    ], style={'width': '50%'}),
+                    html.Button("Berechne Basecheck", id="calculate-basecheck-nbv", style={'margin-top': '10px'})
+                ]),
+                html.Div(id="basecheck-status-nbv", style={'margin-top': '10px'}),
+                dash_table.DataTable(
+                    id="basecheck-table-nbv",
+                    columns=[],
+                    data=[],
+                    merge_duplicate_headers=True,
+                    style_table={'overflowX': 'auto'},
+                    style_cell={'textAlign': 'left'}
+                )
             ])
+
         ], id="nicht-bewegtbild-subtabs", value="hochrechnung_nbv")
     ])

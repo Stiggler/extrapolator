@@ -27,7 +27,17 @@ def video_tab():
                 ], style={'width': '48%', 'display': 'inline-block'})
             ]),
             html.Br(),
-            html.Button("Prozentwerte", id="calculate-percentages"),
+            html.Div([
+                html.Button("➕ Zeile hinzufügen", id="add-percentages-row", style={'margin-right': '10px'}),
+                html.Button("📋 Zeilen duplizieren", id="duplicate-percentages-rows", style={'margin-right': '30px'}),
+
+                html.Label("Feld:"),
+                dcc.Dropdown(id="field-selector", placeholder="Feld auswählen", style={'width': '150px', 'display': 'inline-block'}),
+                html.Label("Wert:"),
+                dcc.Input(id="field-value", type="text", style={'width': '150px', 'margin-left': '10px'}),
+                html.Button("Wert übernehmen", id="apply-field-value", style={'margin-left': '10px'})
+            ], style={'margin-top': '10px', 'display': 'flex', 'flex-wrap': 'wrap', 'gap': '10px'}),
+            html.Button("Prozentwerte", id="calculate-percentages", style={'margin-top': '10px'}),
             html.Button("Extrapolate", id="extrapolate", style={'margin-left': '10px'}),
             html.Button("Update Percentages", id="update-percentages", style={'margin-left': '10px'}),
             html.Div(id="percentages-status"),
@@ -38,6 +48,10 @@ def video_tab():
                 columns=[],
                 data=[],
                 editable=True,
+                row_selectable="multi",
+                selected_rows=[],
+                 filter_action="native",         # ✅ Filter aktivieren
+                sort_action="native",           # ✅ Sortieren aktivieren      
                 style_table={'overflowX': 'auto'}
             )
         ])
@@ -102,6 +116,7 @@ def video_tab():
                     id="basecheck-table",
                     columns=[],
                     data=[],
+                    merge_duplicate_headers=True,
                     style_table={'overflowX': 'auto'},
                     style_cell={'textAlign': 'left'}
                 )

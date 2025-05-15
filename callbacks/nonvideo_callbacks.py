@@ -319,4 +319,40 @@ def register_nonvideo_callbacks(app):
         output.seek(0)
         return dcc.send_bytes(output.getvalue(), "nonvideo_report.xlsx")
 
-    
+    @app.callback(
+        [
+            Output("basecheck-status-nbv", "children"),
+            Output("basecheck-table-nbv", "data"),
+            Output("basecheck-table-nbv", "columns")
+        ],
+        Input("calculate-basecheck-nbv", "n_clicks"),
+        State("mm-dimensions-basecheck-nbv", "value"),
+        prevent_initial_call=True
+    )
+    def calculate_nonvideo_basecheck(n_clicks, dimensions):
+        if not dimensions:
+            return "Bitte wählen Sie mindestens eine Dimension aus.", [], []
+
+        conn = sqlite3.connect("data.db")
+        df = pd.read_sql("SELECT * FROM non_video", conn)
+        conn.close()
+
+        if df.empty or "hr_basis" not in df.columns:
+            return "Keine gültigen Daten in 'non_video' gefunden.", [], []
+
+        grouped = df.groupby(dimensions + ["hr_basis"], as_index=False).agg({
+            "bid": pd.Series.nunique
+        })
+
+        pivot_bid = grouped.pivot_table(index=dimensions, columns="hr_basis", values="bid", fill_value=0).add_prefix("distinct_bid_").reset_index()
+
+        columns = []
+        for col in pivot_bid.columns:
+            if col.startswith("distinct_bid_"):
+                basis = col.replace("distinct_bid_", "")
+                columns.append({"name": ["distinct_bid", basis], "id": col})
+            else:
+                columns.append({"name": [col, ""], "id": col})
+
+        data = pivot_bid.to_dict("records")
+        return f"{len(pivot_bid)} Gruppen gefunden.", data, columns
