@@ -4,6 +4,8 @@ import pandas as pd
 import sqlite3
 import re
 from helpers import decimal_to_hms
+from helpers import convert_timedelta_to_decimal
+
 
 
 def register_video_callbacks(app):
@@ -88,85 +90,119 @@ def register_video_callbacks(app):
 
 
     @app.callback(
-        Output("update-percentages-status", "children"),
-        Input("update-percentages", "n_clicks"),
-        State("percentages-table", "data")
-    )
-    def update_percentages_db(n_clicks, table_data):
-        if not n_clicks:
-            return ""
-        df = pd.DataFrame(table_data)
-        conn = sqlite3.connect("data.db")
-        df.to_sql("percent", conn, if_exists="replace", index=False)
-        conn.close()
-        return "Tabelle 'percent' wurde aktualisiert."
-
-    @app.callback(
         Output("extrapolate-status", "children"),
         Input("extrapolate", "n_clicks"),
-        State("mm-dimensions", "value")
+        State("mm-dimensions", "value"),
+        State("ea-dimensions", "value"),
+        prevent_initial_call=True
     )
-    def extrapolate_hr(n_clicks, mm_dims):
+    def extrapolate_hr(n_clicks, mm_dims, ea_dims):
         if not n_clicks:
-            return ""
-        if not mm_dims:
-            return "Bitte wählen Sie mindestens eine MM-Dimension für die Hochrechnung aus."
+            return dash.no_update
 
-        db_path = "data.db"
-        conn = sqlite3.connect(db_path)
+        # Dimensionen initialisieren
+        mm_dims = mm_dims or []
+        ea_dims = ea_dims or []
+        group_by_cols = mm_dims + ea_dims
+
+        # Daten aus Datenbank laden
+        conn = sqlite3.connect("data.db")
         df_video = pd.read_sql("SELECT * FROM video WHERE hr_basis = 'HR'", conn)
         df_percent = pd.read_sql("SELECT * FROM percent", conn)
         conn.close()
 
-        if df_video.empty:
-            return "Keine HR-Daten in der Tabelle video gefunden."
-        if df_percent.empty:
-            return "Keine Daten in der Tabelle percent gefunden."
+        # Whitespace-Bereinigung für alle group_by_cols
+        for col in group_by_cols:
+            if col in df_video.columns:
+                df_video[col] = df_video[col].astype(str).str.strip()
+            if col in df_percent.columns:
+                df_percent[col] = df_percent[col].astype(str).str.strip()
 
-        df_merged = pd.merge(df_video, df_percent, on=mm_dims, suffixes=("_video", "_percent"))
-        if "visibility_share_percent" not in df_merged.columns:
-            return "Spalte 'visibility_share_percent' fehlt in den aggregierten Daten."
+        # 1) Filter auf MM-Dimensionen: nur diejenigen Prozent-Zeilen behalten, die in df_video vorkommen
+        if mm_dims:
+            valid_mm = df_video[mm_dims].drop_duplicates()
+            df_percent = df_percent.merge(valid_mm, on=mm_dims, how="inner")
 
-        df_merged["visibility_share"] = df_merged["visibility_share_percent"]
+        # 2) avg_mention konvertieren
+        if "avg_mention" in df_percent.columns:
+            df_percent["avg_mention"] = pd.to_timedelta(df_percent["avg_mention"], errors="coerce")
+            df_percent["avg_mention_numeric"] = df_percent["avg_mention"].apply(convert_timedelta_to_decimal)
 
+        # 3) Sichtbarkeit im Percent-DF neu berechnen
+        if "visibility" in df_percent.columns:
+            df_percent.drop(columns=["visibility"], inplace=True)
+        if "visibility_share" in df_percent.columns and "sum_broadcasting_time" in df_percent.columns:
+            # Visibility-Share in Float
+            df_percent["visibility_share_float"] = (
+                df_percent["visibility_share"].str.replace("%", "").str.replace(",", ".").astype(float) / 100
+            )
+            # sum_broadcasting_time (HH:MM:SS) in Tage umwandeln
+            df_percent["sum_broadcasting_time_days"] = (
+                pd.to_timedelta(df_percent["sum_broadcasting_time"], errors="coerce").dt.total_seconds() / 86400
+            )
+            # Absolute Visibility pro Kombination (in Tagen)
+            df_percent["visibility"] = (
+                df_percent["visibility_share_float"] * df_percent["sum_broadcasting_time_days"]
+            )
 
-        def convert_visibility_share(val):
-            try:
-                if isinstance(val, str) and "%" in val:
-                    return float(val.strip('%')) / 100.0
-                elif isinstance(val, (int, float)):
-                    return float(val)
-                else:
-                    return 0.0
-            except Exception:
-                return 0.0
+        # 4) Merge auf MM-Dimensionen (EA-Zeilen werden dupliziert)) Merge auf MM-Dimensionen (EA-Zeilen werden dupliziert)) Merge auf MM-Dimensionen (EA-Zeilen werden dupliziert)
+        try:
+            df_merged = pd.merge(
+                df_video,
+                df_percent,
+                on=mm_dims,
+                how="inner",
+                suffixes=("", "_percent")
+            )
+        except Exception as e:
+            return f"❌ Merge-Fehler: {e}"
 
-        df_merged["visibility_share_factor"] = df_merged["visibility_share"].apply(convert_visibility_share)
-        df_merged["visibility"] = df_merged["visibility_share_factor"] * df_merged["broadcasting_time"]
+        if df_merged.empty:
+            return "⚠️ Keine passenden Kombinationen zwischen HR-Zeilen und Prozentwerten gefunden."
 
-        def hms_to_decimal(hms_str):
-            try:
-                parts = re.split(":", hms_str)
-                if len(parts) != 3:
-                    return 0.0
-                hours, minutes, seconds = map(float, parts)
-                return (hours * 3600 + minutes * 60 + seconds) / 86400
-            except Exception:
-                return 0.0
+        # 5) EA-Dimensionen aus df_percent übernehmen und Suffixe entfernen
+        for col in ea_dims:
+            percent_col = f"{col}_percent"
+            if percent_col in df_merged.columns:
+                df_merged[col] = df_merged[percent_col]
+        drop_cols = [f"{col}_percent" for col in ea_dims]
+        df_merged.drop(columns=drop_cols, inplace=True)
 
-        df_merged["avg_mention_numeric"] = df_merged["avg_mention"].apply(hms_to_decimal)
+        # 6) Neue Sichtbarkeit berechnen: broadcasting_time * visibility_share_float
+        try:
+            df_merged["visibility"] = (
+                df_merged["broadcasting_time"] * df_merged["visibility_share_float"]
+            )
+        except Exception:
+            df_merged["broadcasting_time_num"] = (
+                pd.to_timedelta(df_merged["broadcasting_time"], errors="coerce").dt.total_seconds() / 86400
+            )
+            df_merged["visibility"] = (
+                df_merged["broadcasting_time_num"] * df_merged["visibility_share_float"]
+            )
+
+        # Neue Zeilen mit visibility == 0 entfernen
+        df_merged = df_merged[df_merged["visibility"] > 0]
+
+        # 7) Mentions berechnen basierend auf neuer visibility und avg_mention_numeric
         df_merged["mentions"] = df_merged.apply(
-            lambda row: int(row["visibility"] / row["avg_mention_numeric"]) if row["avg_mention_numeric"] > 0 else 1,
+            lambda row: int(row["visibility"] / row["avg_mention_numeric"]) if pd.notnull(row["visibility"]) and row["avg_mention_numeric"] > 0 else 0,
             axis=1
         )
+        # Falls visibility > 0 aber mentions == 0, setze mentions auf 1
+        df_merged.loc[(df_merged["visibility"] > 0) & (df_merged["mentions"] == 0), "mentions"] = 1
 
-        df_merged.drop(columns=["visibility_share_factor", "avg_mention_numeric"], inplace=True)
-
-        conn = sqlite3.connect(db_path)
+    # 8) In Datenbank speichern
+        conn = sqlite3.connect("data.db")
+        df_merged.to_sql("video_final", conn, if_exists="replace", index=False)
         df_merged.to_sql("hr_bewegt", conn, if_exists="replace", index=False)
         conn.close()
 
-        return f"Extrapolation abgeschlossen: {len(df_merged)} Zeilen wurden in 'hr_bewegt' erstellt."
+        return f"✅ Extrapolation erfolgreich: {len(df_merged)} Zeilen gespeichert (hr_bewegt)."
+
+
+
+
 
     @app.callback(
         [Output("results-status", "children"),
@@ -296,20 +332,18 @@ def register_video_callbacks(app):
 
     @app.callback(
         Output("percentages-table", "data", allow_duplicate=True),
-        [
-            Input("add-percentages-row", "n_clicks"),
-            Input("duplicate-percentages-rows", "n_clicks")
-        ],
+        Input("duplicate-percentages-rows", "n_clicks"),
         State("percentages-table", "data"),
         State("percentages-table", "columns"),
         State("percentages-table", "selected_rows"),
         prevent_initial_call=True
     )
-    def modify_percentages_table(n_add, n_duplicate, data, columns, selected_rows):
-        from dash import callback_context
-        triggered = callback_context.triggered_id
-        if data is None:
-            data = []
+    def modify_percentages_table(n_duplicate, data, columns, selected_rows):
+        if not selected_rows or data is None:
+            return data
+        duplicated = [data[i].copy() for i in selected_rows]
+        return data + duplicated
+
 
         if triggered == "add-percentages-row":
             new_row = {col["id"]: "" for col in columns}
@@ -397,3 +431,138 @@ def register_video_callbacks(app):
         data = df_final.to_dict("records")
 
         return f"{len(df_final)} Gruppen gefunden.", data, columns
+
+    @app.callback(
+        Output("percentages-table", "selected_rows", allow_duplicate=True),
+        Input("select-all-visible-rows", "n_clicks"),
+        State("percentages-table", "data"),
+        prevent_initial_call=True
+    )
+    def select_all_rows(n_clicks, data):
+        return list(range(len(data)))
+
+    @app.callback(
+        Output("percentages-table", "selected_rows", allow_duplicate=True),
+        Input("deselect-all-rows", "n_clicks"),
+        prevent_initial_call=True
+    )
+    def deselect_all_rows(n_clicks):
+        return []
+
+    @app.callback(
+        Output("percentages-table", "data", allow_duplicate=True),
+        Input("delete-percentages-rows", "n_clicks"),
+        State("percentages-table", "data"),
+        State("percentages-table", "selected_rows"),
+        prevent_initial_call=True
+    )
+    def delete_selected_rows(n_clicks, data, selected_rows):
+        if not selected_rows:
+            return data
+        return [row for i, row in enumerate(data) if i not in selected_rows]
+
+    @app.callback(
+        Output("download-percentages", "data"),
+        Input("export-percentages-button", "n_clicks"),
+        State("percentages-table", "data"),
+        prevent_initial_call=True
+    )
+    def export_percentages(n_clicks, data):
+        if not data:
+            return None
+        df = pd.DataFrame(data)
+
+        from io import BytesIO
+        import openpyxl
+        from openpyxl.utils import get_column_letter
+
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name="percent")
+            worksheet = writer.sheets["percent"]
+            for i, col in enumerate(df.columns):
+                col_letter = get_column_letter(i + 1)
+                if "mention" in col or "sum" in col:
+                    for cell in worksheet[col_letter][1:]:
+                        cell.number_format = '#,##0'
+                elif "visibility" in col or "broadcasting" in col:
+                    for cell in worksheet[col_letter][1:]:
+                        cell.number_format = 'h:mm:ss'
+        output.seek(0)
+        return dcc.send_bytes(output.getvalue(), "percent.xlsx")
+
+
+    @app.callback(
+        [
+            Output("percentages-table", "data", allow_duplicate=True),
+            Output("percentages-table", "columns", allow_duplicate=True),
+            Output("field-selector", "options", allow_duplicate=True),
+            Output("import-percentages-status", "children", allow_duplicate=True)
+        ],
+        Input("import-percentages-upload", "contents"),
+        State("percentages-table", "data"),
+        prevent_initial_call=True
+    )
+    def import_percentages(contents, existing_data):
+        import base64
+        import io
+        if contents is None:
+            return dash.no_update
+
+        # Datei einlesen
+        content_type, content_string = contents.split(',')
+        decoded = base64.b64decode(content_string)
+        df_new = pd.read_excel(io.BytesIO(decoded), sheet_name="percent")
+
+        # 🧠 Konvertierung: avg_mention zurück zu timedelta → dann float
+        if "avg_mention" in df_new.columns:
+            df_new["avg_mention"] = pd.to_timedelta(df_new["avg_mention"], errors="coerce")
+            df_new["avg_mention_numeric"] = df_new["avg_mention"].apply(convert_timedelta_to_decimal)
+
+        # Optional: visibility in float (falls nötig für spätere Division)
+        if "visibility" in df_new.columns:
+            df_new["visibility"] = pd.to_numeric(df_new["visibility"], errors="coerce")
+
+        # Vorhandene Daten anhängen
+        df_existing = pd.DataFrame(existing_data) if existing_data else pd.DataFrame()
+
+        if not df_existing.empty:
+            common_cols = [col for col in df_existing.columns if col in df_new.columns]
+            df_new = df_new[common_cols]
+            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        else:
+            df_combined = df_new
+
+        # Outputs vorbereiten
+        data = df_combined.to_dict("records")
+        columns = [{"name": col, "id": col, "editable": True} for col in df_combined.columns]
+        dropdown_options = [{"label": col, "value": col} for col in df_combined.columns]
+
+        # Statusmeldung
+        import_count = len(df_new)
+        total_count = len(df_combined)
+        status_msg = f"📥 {import_count} Zeilen importiert, {total_count} Zeilen insgesamt."
+
+        return data, columns, dropdown_options, status_msg
+
+
+    @app.callback(
+        Output("percentages-status", "children", allow_duplicate=True),
+        Input("update-percentages", "n_clicks"),
+        State("percentages-table", "data"),
+        prevent_initial_call=True
+    )
+    def update_percentages_db(n_clicks, data):
+        if not data:
+            return "❌ Keine Daten zum Speichern."
+
+        try:
+            df = pd.DataFrame(data)
+            conn = sqlite3.connect("data.db")
+            df.to_sql("percent", conn, if_exists="replace", index=False)
+            conn.close()
+            return f"✅ Prozentwertetabelle erfolgreich gespeichert ({len(df)} Zeilen)."
+        except Exception as e:
+            return f"❌ Fehler beim Speichern: {e}"
+
+

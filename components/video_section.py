@@ -28,9 +28,10 @@ def video_tab():
             ]),
             html.Br(),
             html.Div([
-                html.Button("➕ Zeile hinzufügen", id="add-percentages-row", style={'margin-right': '10px'}),
-                html.Button("📋 Zeilen duplizieren", id="duplicate-percentages-rows", style={'margin-right': '30px'}),
-
+                html.Button("🗑️ Zeile löschen", id="delete-percentages-rows", style={'font-size': '12px', 'padding': '4px 8px'}),
+                html.Button("Select all", id="select-all-visible-rows", style={'font-size': '12px', 'padding': '4px 8px'}),
+                html.Button("Deselect all", id="deselect-all-rows", style={'font-size': '12px', 'padding': '4px 8px', 'margin-left': '6px'}),
+                html.Button("📋 Zeilen duplizieren", id="duplicate-percentages-rows", style={'margin-right': '20px'}),
                 html.Label("Feld:"),
                 dcc.Dropdown(id="field-selector", placeholder="Feld auswählen", style={'width': '150px', 'display': 'inline-block'}),
                 html.Label("Wert:"),
@@ -43,6 +44,19 @@ def video_tab():
             html.Div(id="percentages-status"),
             html.Div(id="update-percentages-status"),
             html.Div(id="extrapolate-status"),
+            html.Div([
+                html.Button("📤 Exportieren", id="export-percentages-button", style={'font-size': '12px', 'padding': '4px 8px'}),
+                dcc.Download(id="download-percentages"),
+                dcc.Upload(
+                    id="import-percentages-upload",
+                    children=html.Button("📥 Importieren", style={'font-size': '12px', 'padding': '4px 8px', 'margin-left': '6px'}),
+                    multiple=False,
+                    accept=".xlsx"
+                )
+            ], style={'margin-top': '10px', 'display': 'flex', 'gap': '10px'}),
+
+            html.Div(id="import-percentages-status", style={"font-size": "12px", "margin-top": "4px", "margin-left": "6px"}),
+
             dash_table.DataTable(
                 id="percentages-table",
                 columns=[],
