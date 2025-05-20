@@ -25,13 +25,42 @@ def nonvideo_tab():
                 html.Br(),
                 html.Button("Berechne Prozentwerte Non-Video", id="calculate-percentages2_nbv"),
                 html.Button("Extrapolate Non-Video", id="extrapolate-nonvideo", style={'margin-left': '10px'}),
+                html.Div(  id="extrapolate-nonvideo-status",
+                        style={'display':'inline-block','margin-left':'10px'}),
+                html.Button("Update Percentages", id="update-percentages-nbv", style={'margin-left': '10px'}),
+                html.Div(id="update-nonvideo-percentages-status", style={'display': 'inline-block', 'margin-left': '10px'}),
                 html.Div(id="nonvideo-percentages-status"),
-                html.Div(id="extrapolate-nonvideo-status"),
+                html.Div([
+                    html.Button("🗑️ Zeile löschen", id="delete-nonvideo-percentages-rows"),
+                    html.Button("Select all", id="select-all-nonvideo-rows", style={'margin-left': '6px'}),
+                    html.Button("Deselect all", id="deselect-all-nonvideo-rows", style={'margin-left': '6px'}),
+                    html.Button("📋 Zeilen duplizieren", id="duplicate-nonvideo-percentages-rows", style={'margin-left': '20px'}),
+                    html.Label("Feld:"),
+                    dcc.Dropdown(
+                        id="field-selector-nonvideo",
+                        options=[],  # wird per Callback befüllt
+                        placeholder="Feld auswählen",
+                        style={'width': '150px', 'display': 'inline-block', 'margin-left': '10px'}
+                    ),
+                    html.Label("Wert:"),
+                    dcc.Input(
+                        id="field-value-nonvideo",
+                        type="text",
+                        style={'width': '150px', 'margin-left': '10px'}
+                    ),
+                    html.Button("Wert übernehmen", id="apply-field-value-nonvideo", style={'margin-left': '10px'})
+                ], style={'margin-top': '10px', 'display': 'flex', 'flex-wrap': 'wrap', 'gap': '10px'}),
+
+                # DataTable mit Mehrfachauswahl, Filter und Sort
                 dash_table.DataTable(
                     id="nonvideo-percentages-table",
-                    columns=[],
+                    columns=[],  # wird per Callback befüllt
                     data=[],
-                    editable=False,
+                    editable=True,
+                    row_selectable="multi",
+                    selected_rows=[],
+                    filter_action="native",
+                    sort_action="native",
                     style_table={'overflowX': 'auto'}
                 )
 
