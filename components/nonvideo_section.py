@@ -115,8 +115,22 @@ def nonvideo_tab():
                     style_cell={'textAlign': 'left'}
                 ),
                 dcc.Graph(id="nonvideo-pie"),
+                # MM-Dimensionen für Split-Export
+                dcc.Dropdown(
+                    id="export-mm-dims-nbv",
+                    multi=True,
+                    placeholder="Nach MM-Dimension(en) getrennt exportieren...",
+                    options=[{'label': col, 'value': col} for col in [
+                        'media','region','country','broadcaster','channel','genre',
+                        'sports','competition','season','event','venue','event_country',
+                        'post_type','owned_channel','discipline'
+                    ]]
+                ),
+                # Anzeige der Zeilenanzahl (non_video + hr_non_bewegt)
                 html.Button("Export Nicht-Bewegtbild", id="export-nonvideo-button", style={'margin-top': '10px'}),
-                dcc.Download(id="download1")
+                dcc.Download(id="download1"),
+                html.Button("Export Nicht-Bewegtbild (Parquet)", id="export-nonvideo-parquet-button", style={'margin-top': '10px', 'margin-left': '10px'}),
+                dcc.Download(id="download-parquet")
             ]),
             dcc.Tab(label="Basecheck", value="basecheck_nbv", children=[
                 html.H1("Nicht-Bewegtbild – Basecheck"),
@@ -146,6 +160,5 @@ def nonvideo_tab():
                     style_cell={'textAlign': 'left'}
                 )
             ])
-
         ], id="nicht-bewegtbild-subtabs", value="hochrechnung_nbv")
     ])

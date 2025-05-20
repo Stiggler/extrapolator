@@ -3,8 +3,9 @@ from dash import Input, Output, State, exceptions, dcc
 import pandas as pd
 import sqlite3
 import uuid
-import random
+import zipfile
 from io import BytesIO
+import random
 import openpyxl
 from openpyxl.utils import get_column_letter
 import plotly.express as px
@@ -294,36 +295,80 @@ def register_nonvideo_callbacks(app):
         )
         return f"Ergebnisse berechnet: {len(agg)} Gruppen.", agg.to_dict('records'), cols, fig
 
-    # 4) Export to Excel
+
+
+# 4a) Zeilenanzahl-Info neben dem Export-Button
     @app.callback(
-        Output('download1','data'),
-        Input('export-nonvideo-button','n_clicks'),
+        Output("nonvideo-export-info", "children"),
+        Input("nicht-bewegtbild-subtabs", "value"),
+        prevent_initial_call=False
+    )
+    def update_nonvideo_export_info(active_tab):
+        # Zähle nur, wenn wir im Hochrechnungs-Tab sind (Value = "hochrechnung_nbv")
+        if active_tab != "ergebnisse_nbv":
+            return ""
+        conn = sqlite3.connect("data.db")
+        c1 = conn.execute("SELECT COUNT(*) FROM non_video").fetchone()[0]
+        c2 = conn.execute("SELECT COUNT(*) FROM hr_non_bewegt").fetchone()[0]
+        conn.close()
+        total = c1 + c2
+        return f"Zeilen in non_video: {c1:,}, hr_non_bewegt: {c2:,} → Gesamt: {total:,}"
+
+
+    # 4b) Export mit optionalem Split per MM-Dimension
+    @app.callback(
+        Output("download1", "data"),
+        Input("export-nonvideo-button", "n_clicks"),
+        State("export-mm-dims-nbv", "value"),
         prevent_initial_call=True
     )
-    def export_nonvideo_to_excel(n_clicks):
+    def export_nonvideo_to_excel(n_clicks, split_dims):
         if not n_clicks:
             raise exceptions.PreventUpdate
-        conn = sqlite3.connect('data.db')
-        df_nv = pd.read_sql('SELECT * FROM non_video', conn)
-        df_hr_nv = pd.read_sql('SELECT * FROM hr_non_bewegt', conn)
+
+        # Daten laden
+        conn = sqlite3.connect("data.db")
+        df_nv = pd.read_sql("SELECT * FROM non_video", conn)
+        df_hr = pd.read_sql("SELECT * FROM hr_non_bewegt", conn)
         conn.close()
-        df_export = pd.concat([df_nv, df_hr_nv], ignore_index=True)
-        buf = BytesIO()
-        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-            df_export.to_excel(writer, index=False, sheet_name='data')
-            ws = writer.sheets['data']
-            for i, col in enumerate(df_export.columns):
-                letter = get_column_letter(i+1)
-                fmt = None
-                if col.lower() in ['pr_value','ave_100','ave_weighted']:
-                    fmt = '#,##0'
-                elif col.lower() in ['broadcasting_time','visibility','apt','start_time_program','end_time_program','start_time_item']:
-                    fmt = 'h:mm:ss'
-                if fmt:
-                    for cell in ws[letter][1:]:
-                        cell.number_format = fmt
-        buf.seek(0)
-        return dcc.send_bytes(buf.getvalue(), 'nonvideo_report.xlsx')
+        df = pd.concat([df_nv, df_hr], ignore_index=True)
+
+        # Kein Split: einfache Excel
+        if not split_dims:
+            buf = BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                df.to_excel(w, index=False, sheet_name="data")
+            buf.seek(0)
+            return dcc.send_bytes(buf.getvalue(), "nonvideo_report.xlsx")
+
+        # Split: ZIP mit je einer Excel pro Kombination
+        zip_buf = BytesIO()
+        with zipfile.ZipFile(zip_buf, mode="w") as zf:
+            # Alle einzigartigen Dim-Kombos
+            combos = df[split_dims].drop_duplicates()
+            for _, key_row in combos.iterrows():
+                # Filter für diese Kombination
+                mask = True
+                parts = []
+                for dim in split_dims:
+                    val = key_row[dim]
+                    mask &= (df[dim] == val)
+                    parts.append(f"{dim}-{val}")
+                sub = df[mask]
+
+                # Excel-Buffer bauen
+                excel_buf = BytesIO()
+                with pd.ExcelWriter(excel_buf, engine="openpyxl") as w:
+                    sub.to_excel(w, index=False, sheet_name="data")
+                excel_buf.seek(0)
+
+                # Dateiname aus den Dim-Werten
+                fname = "_".join(parts) + ".xlsx"
+                zf.writestr(fname, excel_buf.read())
+
+        zip_buf.seek(0)
+        return dcc.send_bytes(zip_buf.getvalue(), "nonvideo_exports.zip")
+
 
     # 5) Basecheck Non-Video
     @app.callback(
@@ -441,3 +486,50 @@ def register_nonvideo_callbacks(app):
             return f"✅ Prozentwertetabelle erfolgreich gespeichert ({len(df)} Zeilen)."
         except Exception as e:
             return f"❌ Fehler beim Speichern: {e}"
+        
+
+    # 4c) Parquet-Export anstelle von Excel
+    @app.callback(
+        Output("download-parquet", "data"),
+        Input("export-nonvideo-parquet-button", "n_clicks"),
+        State("export-mm-dims-nbv", "value"),
+        prevent_initial_call=True
+    )
+    def export_nonvideo_to_parquet(n_clicks, split_dims):
+        if not n_clicks:
+            raise exceptions.PreventUpdate
+
+        # Daten laden
+        conn = sqlite3.connect("data.db")
+        df_nv = pd.read_sql("SELECT * FROM non_video", conn)
+        df_hr = pd.read_sql("SELECT * FROM hr_non_bewegt", conn)
+        conn.close()
+        df = pd.concat([df_nv, df_hr], ignore_index=True)
+
+        # Single Parquet
+        if not split_dims:
+            buf = BytesIO()
+            df.to_parquet(buf, index=False, engine="pyarrow")
+            buf.seek(0)
+            return dcc.send_bytes(buf.getvalue(), "nonvideo.parquet")
+
+        # Optional: split per MM-Dimension und ZIP mehrere Parquets
+        import zipfile
+        zip_buf = BytesIO()
+        with zipfile.ZipFile(zip_buf, mode="w") as zf:
+            combos = df[split_dims].drop_duplicates()
+            for _, key_row in combos.iterrows():
+                mask = True
+                parts = []
+                for dim in split_dims:
+                    val = key_row[dim]
+                    mask &= (df[dim] == val)
+                    parts.append(f"{dim}-{val}")
+                sub = df[mask]
+                parquet_buf = BytesIO()
+                sub.to_parquet(parquet_buf, index=False, engine="pyarrow")
+                parquet_buf.seek(0)
+                fname = "_".join(parts) + ".parquet"
+                zf.writestr(fname, parquet_buf.read())
+        zip_buf.seek(0)
+        return dcc.send_bytes(zip_buf.getvalue(), "nonvideo_parquets.zip")
