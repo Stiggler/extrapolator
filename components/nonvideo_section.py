@@ -130,7 +130,8 @@ def nonvideo_tab():
                 html.Button("Export Nicht-Bewegtbild", id="export-nonvideo-button", style={'margin-top': '10px'}),
                 dcc.Download(id="download1"),
                 html.Button("Export Nicht-Bewegtbild (Parquet)", id="export-nonvideo-parquet-button", style={'margin-top': '10px', 'margin-left': '10px'}),
-                dcc.Download(id="download-parquet")
+                dcc.Download(id="download-parquet"),
+                html.Div(id="nonvideo-export-info", style={'margin-top':'8px','fontStyle':'italic'})
             ]),
             dcc.Tab(label="Basecheck", value="basecheck_nbv", children=[
                 html.H1("Nicht-Bewegtbild – Basecheck"),
