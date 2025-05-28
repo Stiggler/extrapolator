@@ -34,6 +34,15 @@ def import_tab():
             }
         ),
         html.Div(id="status", style={'margin-bottom': '20px'}),
+        html.Button(
+        "Datenbank leeren",
+        id="clear-db-button",
+        style={'margin-top': '5px', 'backgroundColor': '#e74c3c', 'color': 'white'}
+    ),
+    html.Div(
+        id="clear-db-status",
+        style={'margin-top': '5px', 'fontStyle': 'italic'}
+     ),
         html.H2("Importübersicht"),
         html.Div([
             html.Div([

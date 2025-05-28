@@ -9,6 +9,7 @@ import random
 import openpyxl
 from openpyxl.utils import get_column_letter
 import plotly.express as px
+from math import ceil
 
 
 def register_nonvideo_callbacks(app):
@@ -153,7 +154,7 @@ def register_nonvideo_callbacks(app):
         )
         return status_msg, data, columns
 
-    # 2) Extrapolate Non-Video HR data
+
     @app.callback(
         Output("extrapolate-nonvideo-status", "children"),
         Input("extrapolate-nonvideo", "n_clicks"),
@@ -162,23 +163,15 @@ def register_nonvideo_callbacks(app):
         prevent_initial_call=True
     )
     def extrapolate_nonvideo(n_clicks, mm_dims2, ea_dims2):
-        print("[DEBUG] Extrapolate Non-Video callback fired, n_clicks =", n_clicks)
         if not n_clicks:
             raise exceptions.PreventUpdate
 
         db_path = "data.db"
-        # Load tables
-        conn = sqlite3.connect(db_path)
-        df_percent = pd.read_sql("SELECT * FROM percent_non_video", conn)
-        df_nonvideo = pd.read_sql("SELECT * FROM non_video", conn)
-        # Debug table list
-        tables = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table';"
-        ).fetchall()
-        print("[DEBUG] Tables in data.db:", tables)
-        conn.close()
+        # 1) Laden der Prozent- und Non-Video-Tabellen
+        with sqlite3.connect(db_path, timeout=30) as conn:
+            df_percent  = pd.read_sql("SELECT * FROM percent_non_video", conn)
+            df_nonvideo = pd.read_sql("SELECT * FROM non_video", conn)
 
-        # Validations
         if df_percent.empty:
             return "❌ Tabelle percent_non_video ist leer."
         if df_nonvideo.empty:
@@ -186,68 +179,123 @@ def register_nonvideo_callbacks(app):
         if not mm_dims2:
             return "⚠️ Keine MM-Dimensionen ausgewählt."
 
-        # Sampling logic
-        alpha = 0.85
+        # 2) Debug-Zähler
+        total_requested = 0
+        total_produced  = 0
+        skipped_zero_id = 0
+        skipped_no_cand = 0
+
+        # 3) Sampling-Loop
         result_rows = []
+        alpha = 0.7
+        scale = 1.5  # Skalierungsfaktor
+
         for _, pr in df_percent.iterrows():
+            # a) ids_for_hr sauber parsen (Tausender entfernen)
+            ids_str    = str(pr.get("ids_for_HR", 0))
+            ids_digits = "".join(ch for ch in ids_str if ch.isdigit())
             try:
-                ids_for_hr = int(float(str(pr.get('ids_for_HR', 0)).replace(',', '.')))
+                base_ids = int(ids_digits) if ids_digits else 0
             except:
-                ids_for_hr = 0
+                base_ids = 0
+
+            # b) Skalieren & Aufrunden
+            ids_for_hr = ceil(base_ids * scale)
+
+            # c) Zero-Check
             if ids_for_hr <= 0:
+                skipped_zero_id += 1
                 continue
+            total_requested += ids_for_hr
+
+            # d) Kandidaten filtern
             df_cand = df_nonvideo[df_nonvideo['hr_basis'].str.upper() == 'HR'].copy()
             for dim in mm_dims2:
                 val = str(pr.get(dim, '')).strip()
                 df_cand = df_cand[df_cand[dim].astype(str).str.strip() == val]
             if df_cand.empty:
+                skipped_no_cand += 1
                 continue
-            pr_vals = df_cand['pr_value'].fillna(0)
-            max_pr = pr_vals.max()
-            normalized = pr_vals / max_pr if max_pr > 0 else pr_vals
-            weights = alpha * normalized + (1 - alpha)
-            sampled = df_cand.sample(
-                n=ids_for_hr,
-                weights=weights,
-                replace=len(df_cand) < ids_for_hr
-            )
+
+            # e) Gewichte
+            pr_vals    = df_cand['pr_value'].fillna(0)
+            max_pr     = pr_vals.max()
+            normalized = pr_vals / max_pr if max_pr>0 else pr_vals
+            weights    = alpha * normalized + (1 - alpha)
+
+            # f) Channel-Guarantee-Sampling
+            mandatory = []
+            remaining = ids_for_hr
+            channels  = df_cand['channel'].dropna().unique()
+            for ch in channels:
+                if remaining <= 0:
+                    break
+                sub = df_cand[df_cand['channel'] == ch]
+                if sub.empty:
+                    continue
+                sel = sub.sample(
+                    n=1,
+                    weights=weights.loc[sub.index],
+                    replace=True
+                )
+                mandatory.append(sel)
+                remaining -= 1
+
+            # g) Restliches Sampling
+            rest = pd.DataFrame()
+            if remaining > 0:
+                rest = df_cand.sample(
+                    n=remaining,
+                    weights=weights,
+                    replace=len(df_cand) < remaining
+                )
+
+            # h) Final zusammenführen
+            sampled = pd.concat(mandatory + [rest], ignore_index=True)
+            total_produced += len(sampled)
+
+            # i) Baue result_rows
             for row in sampled.to_dict('records'):
                 new = row.copy()
+                # EA-Dimensionen übernehmen
                 for ea in ea_dims2 or []:
                     if ea in pr:
                         new[ea] = pr[ea]
+                # mentions
                 try:
                     new['mentions'] = int(float(str(pr['avg_mentions']).replace(',', '.')))
                 except:
                     new['mentions'] = 1
-                new['ave_100'] = new.get('pr_value', 0)
+                # ave_100, ave_weighting_factor, ave_weighted
+                new['ave_100']              = new.get('pr_value', 0)
                 try:
                     aw = float(str(pr.get('avg_weighting_factor', 0)).replace(',', '.'))
                 except:
                     aw = 0.0
                 new['ave_weighting_factor'] = aw
-                new['ave_weighted'] = (
-                    float(new.get('pr_value', 0)) * (aw / 100)
-                ) if aw else 0.0
+                new['ave_weighted']         = float(new.get('pr_value', 0)) * (aw/100)
+                # HR-Kennung und neue BID
                 new['hr_basis'] = 'HR'
-                new['bid'] = str(uuid.uuid4())
+                new['bid']      = str(uuid.uuid4())
                 result_rows.append(new)
 
+        # 4) Debug-Report bei 0 Zeilen
         if not result_rows:
-            return "⚠️ Keine HR-Zeilen extrapoliert."
+            return (f"⚠️ Keine HR-Zeilen. Angefordert={total_requested}, "
+                    f"zero_id={skipped_zero_id}, no_cand={skipped_no_cand}")
 
-        # Write to DB
+        # 5) Schreiben in DB
         df_hr = pd.DataFrame(result_rows)
         try:
-            conn = sqlite3.connect(db_path)
-            df_hr.to_sql(
-                'hr_non_bewegt', conn,
-                if_exists='replace', index=False
-            )
-            conn.close()
-            return f"✅ HR Non-Video-Daten extrapoliert: {len(df_hr)} Zeilen erstellt."
+            with sqlite3.connect(db_path, timeout=30) as conn:
+                df_hr.to_sql('hr_non_bewegt', conn, if_exists='replace', index=False)
         except Exception as e:
-            return f"❌ Fehler beim Speichern in 'hr_non_bewegt': {e}"
+            return f"❌ Speichern fehlgeschlagen: {e}"
+
+        # 6) Finaler Debug-Report
+        return (f"✅ Fertig. Angefordert={total_requested}, Generiert={total_produced}, "
+                f"zero_id={skipped_zero_id}, no_cand={skipped_no_cand}")
+        
 
     # 3) Calculate results
     @app.callback(

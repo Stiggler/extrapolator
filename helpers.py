@@ -1,9 +1,12 @@
 import base64
 import io
+import os
 import sqlite3
 import pandas as pd
 import datetime
 from openpyxl import load_workbook
+
+PARQUET_CACHE = "cache/latest_upload.parquet"
 
 def read_time_column_with_openpyxl(path_or_buffer, column_name):
     wb = load_workbook(path_or_buffer, data_only=True)
@@ -78,52 +81,109 @@ def time_to_timedelta(val):
 
 
 def parse_contents(contents, filename):
+    """
+    1) Nur ein einziger read_excel-Aufruf statt Zeile-für-Zeile mit Openpyxl.
+    2) Anschließend Time-Spalten vectorisiert mit pandas.to_timedelta parsen.
+    """
+    # 1. Payload dekodieren
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
+    excel_io = io.BytesIO(decoded)
+
+    # 2. Komplett-Import aller Spalten in C-geschriebenem Code
+    df = pd.read_excel(
+        excel_io,
+        sheet_name="data",
+        engine="openpyxl",
+        na_values=["", "NA", None]
+    )
+
+    # 3. Zeitspalten vectorisiert umwandeln (h:mm:ss, Days, Strings, …)
+    for col in ["visibility", "broadcasting_time"]:
+        if col in df.columns:
+            df[col] = (
+                df[col]
+                  .astype(str)
+                  .str.replace(r"[^\d\.\:]", ":", regex=True)
+                  .pipe(pd.to_timedelta, errors="coerce")
+                  .dt.total_seconds() / 86400
+            )
+
+    # 4. Weitere Timedeltas (wenn nötig) auf dieselbe Weise
+    for col in ["apt", "program_duration", "start_time_program", "end_time_program", "start_time_item"]:
+        if col in df.columns:
+            df[col] = (
+                pd.to_timedelta(df[col], errors="coerce")
+                  .dt.total_seconds() / 86400
+            )
+
+    return df
+
+
+def update_database(df: pd.DataFrame, mode: str, first_file: bool):
+    """
+    1) SQLite PRAGMAs für Bulk-Inserts.
+    2) to_sql im Batch-Modus mit method='multi' und chunksize.
+    3) Parquet-Cache für spätere Leseläufe.
+    """
+    db_path = "data.db"
+    # ensure cache folder exists
+    os.makedirs(os.path.dirname(PARQUET_CACHE), exist_ok=True)
+
+    # 1) Bulk-Insert mit Pragmas
+    with sqlite3.connect(db_path, timeout=30) as conn:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        # conn.execute("PRAGMA locking_mode=EXCLUSIVE;")
+
+        if first_file:
+            how = "replace" if mode == "replace" else "append"
+        else:
+            how = "append"
+            # aufteilen auf gemeinsame Spalten, wie gehabt
+            existing = pd.read_sql("SELECT * FROM data LIMIT 1", conn).columns
+            df = df.reindex(columns=existing, fill_value=pd.NA)
+
+        # SQLite limitiert auf 999 Variablen pro INSERT → chunk size = floor(999 / ncols)
+        ncols   = len(df.columns)
+        max_vars = 999
+        chunk   = max(1, max_vars // ncols)
+        df.to_sql(
+            "data",
+            conn,
+            if_exists=how,
+            index=False,
+            method="multi",
+            chunksize=chunk
+        )
+    # 2) Parquet-Cache aktualisieren (Connection sauber schließen)
     try:
-        excel_io = io.BytesIO(decoded)
-        df = pd.read_excel(excel_io, sheet_name="data", engine="openpyxl")
-
-        # Sichtbarkeiten & Sendezeiten robust auslesen
-        df["visibility"] = read_time_column_with_openpyxl(excel_io, "visibility").apply(convert_timedelta_to_decimal)
-        df["broadcasting_time"] = read_time_column_with_openpyxl(excel_io, "broadcasting_time").apply(convert_timedelta_to_decimal)
-
-        # Weitere Zeitspalten normal verarbeiten
-        for col in ["apt", "program_duration", "start_time_program", "end_time_program", "start_time_item"]:
-            if col in df.columns:
-                df[col] = df[col].apply(time_to_timedelta)
-                df[col] = df[col].apply(convert_timedelta_to_decimal)
-
-        return df
-    except Exception as e:
-        print(f"Fehler beim Einlesen von {filename}: {e}")
-        return None
+        with sqlite3.connect(db_path, timeout=30) as cache_conn:
+            df_cache = pd.read_sql("SELECT * FROM data", cache_conn)
+        df_cache.to_parquet(PARQUET_CACHE, index=False, engine="pyarrow")
+    except Exception:
+        pass
 
 
 
-def update_database(df, mode, first_file):
-    db_path = 'data.db'
-    conn = sqlite3.connect(db_path)
+def load_data(refresh_from_db: bool = False) -> pd.DataFrame:
+    """
+    Zentrale Daten-Ladefunktion:
+    - per Parquet, wenn vorhanden
+    - sonst per SQL
+    """
+    if not refresh_from_db and os.path.exists(PARQUET_CACHE):
+        try:
+            return pd.read_parquet(PARQUET_CACHE, engine="pyarrow")
+        except Exception:
+            pass
 
-    if first_file:
-        if_exists_option = "replace" if mode == "replace" else "append"
-        df.to_sql("data", conn, if_exists=if_exists_option, index=False)
-    else:
-        # 👉 Spaltenstruktur aus existierender Tabelle lesen
-        existing_cols = pd.read_sql("SELECT * FROM data LIMIT 1", conn).columns.tolist()
-
-        # 👉 Nur gemeinsame Spalten behalten (Überschüssige entfernen)
-        df = df[[col for col in df.columns if col in existing_cols]]
-
-        # 👉 Fehlende Spalten ergänzen mit NaN
-        for col in existing_cols:
-            if col not in df.columns:
-                df[col] = pd.NA
-        df = df[existing_cols]
-
-        df.to_sql("data", conn, if_exists="append", index=False)
-
-    conn.close()
+    df = pd.read_sql("SELECT * FROM data", sqlite3.connect("data.db", timeout=30))
+    try:
+        df.to_parquet(PARQUET_CACHE, index=False, engine="pyarrow")
+    except Exception:
+        pass
+    return df
 
 
 
