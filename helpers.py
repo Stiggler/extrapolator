@@ -98,16 +98,27 @@ def parse_contents(contents, filename):
         na_values=["", "NA", None]
     )
 
-    # 3. Zeitspalten vectorisiert umwandeln (h:mm:ss, Days, Strings, …)
+    def _parse_mixed_time(val):
+        if isinstance(val, (int, float)) and not pd.isna(val):
+            return float(val)
+        try:
+            if isinstance(val, str) and val.replace(",", ".").replace(".", "", 1).isdigit():
+                return float(val.replace(",", "."))
+        except:
+            pass
+        try:
+            td = pd.to_timedelta(val, errors="coerce")
+            if pd.isnull(td):
+                return None
+            return td.total_seconds() / 86400
+        except:
+            return None
+
     for col in ["visibility", "broadcasting_time"]:
         if col in df.columns:
-            df[col] = (
-                df[col]
-                  .astype(str)
-                  .str.replace(r"[^\d\.\:]", ":", regex=True)
-                  .pipe(pd.to_timedelta, errors="coerce")
-                  .dt.total_seconds() / 86400
-            )
+            df[col] = df[col].apply(_parse_mixed_time)
+
+
 
     # 4. Weitere Timedeltas (wenn nötig) auf dieselbe Weise
     for col in ["apt", "program_duration", "start_time_program", "end_time_program", "start_time_item"]:

@@ -449,17 +449,23 @@ def register_video_callbacks(app):
     def deselect_all_rows(n_clicks):
         return []
 
-    @app.callback(
-        Output("percentages-table", "data", allow_duplicate=True),
-        Input("delete-percentages-rows", "n_clicks"),
-        State("percentages-table", "data"),
-        State("percentages-table", "selected_rows"),
-        prevent_initial_call=True
-    )
-    def delete_selected_rows(n_clicks, data, selected_rows):
-        if not selected_rows:
-            return data
-        return [row for i, row in enumerate(data) if i not in selected_rows]
+    def safe_decimal_to_hms(val):
+        import pandas as pd
+        if pd.isnull(val):
+            return ""
+        if isinstance(val, str) and ":" in val:
+            return val
+        if isinstance(val, pd.Timedelta):
+            total_seconds = int(val.total_seconds())
+        else:
+            try:
+                total_seconds = int(float(val) * 86400)
+            except Exception:
+                return ""
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}"
 
     @app.callback(
         Output("download-percentages", "data"),
@@ -470,11 +476,29 @@ def register_video_callbacks(app):
     def export_percentages(n_clicks, data):
         if not data:
             return None
+        import pandas as pd
+        from io import BytesIO
+        from openpyxl.utils import get_column_letter
+        import openpyxl
+
         df = pd.DataFrame(data)
 
-        from io import BytesIO
-        import openpyxl
-        from openpyxl.utils import get_column_letter
+        # avg_mention als Zeitstring (Excel-Zeitformat)
+        if "avg_mention" in df.columns:
+            df["avg_mention"] = df["avg_mention"].apply(safe_decimal_to_hms)
+
+        # visibility_share als Dezimalwert (Excel-Prozentwert)
+        if "visibility_share" in df.columns:
+            # Stelle sicher, dass alles float ist (und kein String wie „12,25 %“)
+            # Wenn im DataFrame noch 12,25 steht, wandle um zu 0.1225
+            df["visibility_share"] = (
+                df["visibility_share"]
+                .astype(str)
+                .str.replace("%", "")
+                .str.replace(",", ".")
+                .astype(float)
+                .apply(lambda x: x/100 if x > 1 else x)   # Nur falls versehentlich 12.25 statt 0.1225 im DataFrame steht
+            )
 
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -482,14 +506,32 @@ def register_video_callbacks(app):
             worksheet = writer.sheets["percent"]
             for i, col in enumerate(df.columns):
                 col_letter = get_column_letter(i + 1)
-                if "mention" in col or "sum" in col:
+                if col == "avg_mention":
                     for cell in worksheet[col_letter][1:]:
-                        cell.number_format = '#,##0'
-                elif "visibility" in col or "broadcasting" in col:
+                        cell.number_format = "h:mm:ss"
+                elif col == "visibility_share":
                     for cell in worksheet[col_letter][1:]:
-                        cell.number_format = 'h:mm:ss'
+                        cell.number_format = "0.00%"
+
         output.seek(0)
         return dcc.send_bytes(output.getvalue(), "percent.xlsx")
+
+
+
+
+
+
+    def parse_excel_avg_mention(val):
+        import pandas as pd
+        if pd.isnull(val):
+            return None
+        if isinstance(val, (float, int)):
+            return float(val)
+        try:
+            td = pd.to_timedelta(val)
+            return td.total_seconds() / 86400
+        except Exception:
+            return None
 
 
     @app.callback(
@@ -506,20 +548,25 @@ def register_video_callbacks(app):
     def import_percentages(contents, existing_data):
         import base64
         import io
+        import pandas as pd
+
         if contents is None:
             return dash.no_update
 
-        # Datei einlesen
         content_type, content_string = contents.split(',')
         decoded = base64.b64decode(content_string)
         df_new = pd.read_excel(io.BytesIO(decoded), sheet_name="percent")
 
-        # 🧠 Konvertierung: avg_mention zurück zu timedelta → dann float
         if "avg_mention" in df_new.columns:
-            df_new["avg_mention"] = pd.to_timedelta(df_new["avg_mention"], errors="coerce")
-            df_new["avg_mention_numeric"] = df_new["avg_mention"].apply(convert_timedelta_to_decimal)
+            df_new["avg_mention"] = df_new["avg_mention"].apply(parse_excel_avg_mention)
 
-        # Optional: visibility in float (falls nötig für spätere Division)
+        if "visibility_share" in df_new.columns:
+            df_new["visibility_share"] = pd.to_numeric(df_new["visibility_share"], errors="coerce")
+
+    # ... (Rest wie gehabt)
+
+
+        # Optional: visibility als float
         if "visibility" in df_new.columns:
             df_new["visibility"] = pd.to_numeric(df_new["visibility"], errors="coerce")
 
@@ -544,6 +591,7 @@ def register_video_callbacks(app):
         status_msg = f"📥 {import_count} Zeilen importiert, {total_count} Zeilen insgesamt."
 
         return data, columns, dropdown_options, status_msg
+
 
 
     @app.callback(
