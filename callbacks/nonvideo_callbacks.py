@@ -276,7 +276,10 @@ def register_nonvideo_callbacks(app):
                 new['ave_weighted']         = float(new.get('pr_value', 0)) * (aw/100)
                 # HR-Kennung und neue BID
                 new['hr_basis'] = 'HR'
-                new['bid']      = str(uuid.uuid4())
+                if "bid" in row:
+                    new["bid"] = row["bid"]
+                if "id" in row:
+                    new["id"] = row["id"]
                 result_rows.append(new)
 
         # 4) Debug-Report bei 0 Zeilen

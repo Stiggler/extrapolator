@@ -91,12 +91,20 @@ def parse_contents(contents, filename):
     excel_io = io.BytesIO(decoded)
 
     # 2. Komplett-Import aller Spalten in C-geschriebenem Code
+    ID_COLUMNS = ["bid", "id"]  # ggf. erweitern!
     df = pd.read_excel(
         excel_io,
         sheet_name="data",
         engine="openpyxl",
         na_values=["", "NA", None]
     )
+    for col in ID_COLUMNS:
+        if col in df.columns:
+            # Alles als String + "X" hinten dran (oder ein anderes seltenes Zeichen)
+            df[col] = df[col].astype(str) 
+
+
+
 
     def _parse_mixed_time(val):
         if isinstance(val, (int, float)) and not pd.isna(val):
@@ -118,7 +126,7 @@ def parse_contents(contents, filename):
         if col in df.columns:
             df[col] = df[col].apply(_parse_mixed_time)
 
-
+    
 
     # 4. Weitere Timedeltas (wenn nötig) auf dieselbe Weise
     for col in ["apt", "program_duration", "start_time_program", "end_time_program", "start_time_item"]:

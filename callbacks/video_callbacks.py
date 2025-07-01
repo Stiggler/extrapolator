@@ -525,21 +525,37 @@ def register_video_callbacks(app):
         import pandas as pd
         if pd.isnull(val):
             return None
+        # 1. Timedelta (Excel-Zeit als Intervall): in Tage wandeln
+        if isinstance(val, pd.Timedelta):
+            return val.total_seconds() / 86400
+        # 2. Float/Int (Excel als Dezimal): direkt übernehmen
         if isinstance(val, (float, int)):
             return float(val)
+        # 3. String: Ist es ein Dezimalwert (z. B. "0,0000925925" oder "0.0000925925")?
+        val_str = str(val).replace(",", ".").strip()
         try:
-            td = pd.to_timedelta(val)
+            # Versuche, als Zahl zu interpretieren
+            as_float = float(val_str)
+            return as_float
+        except Exception:
+            pass
+        # 4. Sonst: versuche, als Zeitstring zu parsen
+        try:
+            td = pd.to_timedelta(val_str)
+            if pd.isnull(td):
+                return None
             return td.total_seconds() / 86400
         except Exception:
             return None
+
+
 
 
     @app.callback(
         [
             Output("percentages-table", "data", allow_duplicate=True),
             Output("percentages-table", "columns", allow_duplicate=True),
-            Output("field-selector", "options", allow_duplicate=True),
-            Output("import-percentages-status", "children", allow_duplicate=True)
+            Output("field-selector", "options", allow_duplicate=True)
         ],
         Input("import-percentages-upload", "contents"),
         State("percentages-table", "data"),
@@ -549,30 +565,54 @@ def register_video_callbacks(app):
         import base64
         import io
         import pandas as pd
+        from helpers import decimal_to_hms
+
+        def parse_excel_avg_mention(val):
+            """Akzeptiert Excel-Zeit (float), Zeitstring oder Dezimal-Tage, gibt Dezimal-Tage zurück."""
+            if pd.isnull(val):
+                return None
+            if isinstance(val, (float, int)):
+                return float(val)
+            # Excel-Zeit als Intervall/Timedelta
+            if isinstance(val, pd.Timedelta):
+                return val.total_seconds() / 86400
+            try:
+                td = pd.to_timedelta(val)
+                if pd.isnull(td):
+                    return None
+                return td.total_seconds() / 86400
+            except Exception:
+                return None
 
         if contents is None:
             return dash.no_update
 
+        # Datei dekodieren & einlesen
         content_type, content_string = contents.split(',')
         decoded = base64.b64decode(content_string)
         df_new = pd.read_excel(io.BytesIO(decoded), sheet_name="percent")
 
+        # avg_mention in float (Dezimal-Tage) umwandeln (akzeptiert Timedelta, float, String)
         if "avg_mention" in df_new.columns:
             df_new["avg_mention"] = df_new["avg_mention"].apply(parse_excel_avg_mention)
+            df_new["avg_mention"] = df_new["avg_mention"].apply(decimal_to_hms)
 
+
+        # visibility_share als float (z.B. 0.2180)
         if "visibility_share" in df_new.columns:
             df_new["visibility_share"] = pd.to_numeric(df_new["visibility_share"], errors="coerce")
+            # Immer als Prozent anzeigen (0.2516 wird zu "25.16%")
+            df_new["visibility_share"] = df_new["visibility_share"].apply(
+                lambda x: f"{x*100:.2f}%" if pd.notnull(x) else ""
+            )
 
-    # ... (Rest wie gehabt)
 
 
-        # Optional: visibility als float
-        if "visibility" in df_new.columns:
-            df_new["visibility"] = pd.to_numeric(df_new["visibility"], errors="coerce")
 
-        # Vorhandene Daten anhängen
+        # Alte Daten (falls vorhanden)
         df_existing = pd.DataFrame(existing_data) if existing_data else pd.DataFrame()
 
+        # Gemeinsame Spalten bestimmen und zusammenführen
         if not df_existing.empty:
             common_cols = [col for col in df_existing.columns if col in df_new.columns]
             df_new = df_new[common_cols]
@@ -580,17 +620,14 @@ def register_video_callbacks(app):
         else:
             df_combined = df_new
 
-        # Outputs vorbereiten
+        # Outputs
         data = df_combined.to_dict("records")
         columns = [{"name": col, "id": col, "editable": True} for col in df_combined.columns]
         dropdown_options = [{"label": col, "value": col} for col in df_combined.columns]
 
-        # Statusmeldung
-        import_count = len(df_new)
-        total_count = len(df_combined)
-        status_msg = f"📥 {import_count} Zeilen importiert, {total_count} Zeilen insgesamt."
+        return data, columns, dropdown_options
 
-        return data, columns, dropdown_options, status_msg
+
 
 
 
@@ -614,3 +651,20 @@ def register_video_callbacks(app):
             return f"❌ Fehler beim Speichern: {e}"
 
 
+    @app.callback(
+        [
+            Output("percentages-table", "data", allow_duplicate=True),
+            Output("percentages-table", "selected_rows", allow_duplicate=True),
+        ],
+        Input("delete-percentages-rows", "n_clicks"),
+        State("percentages-table", "data"),
+        State("percentages-table", "selected_rows"),
+        prevent_initial_call=True
+    )
+    def delete_percentages_rows(n_clicks, data, selected_rows):
+        if not n_clicks or not data or not selected_rows:
+            raise dash.exceptions.PreventUpdate
+
+        data_new = [row for i, row in enumerate(data) if i not in selected_rows]
+
+        return data_new, []
