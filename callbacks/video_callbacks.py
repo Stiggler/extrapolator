@@ -159,6 +159,11 @@ def register_video_callbacks(app):
 
         if df_merged.empty:
             return "⚠️ Keine passenden Kombinationen zwischen HR-Zeilen und Prozentwerten gefunden."
+        
+        # Sichtbarkeit float-Wert in die Prozentwert-Spalte übernehmen
+        if "visibility_share_float" in df_merged.columns:
+            df_merged["visibility_share"] = df_merged["visibility_share_float"]
+
 
         # 5) EA-Dimensionen aus df_percent übernehmen und Suffixe entfernen
         for col in ea_dims:
